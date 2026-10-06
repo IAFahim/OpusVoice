@@ -9,6 +9,7 @@ import com.example.audio.AudioPlayer
 import com.example.audio.AudioRecorder
 import com.example.audio.OpusCodec
 import com.example.audio.TransmissionMode
+import com.example.qr.QrPayload
 import com.example.webrtc.JitterBuffer
 import com.example.webrtc.JitterBufferStats
 import com.example.webrtc.NetworkTelemetry
@@ -451,6 +452,33 @@ class OpusVoiceViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun setPinholeTicket(ticket: String) {
         _uiState.update { it.copy(pinholeTicket = ticket) }
+    }
+
+    /** Applies a scanned QR code: fills the fields the payload addresses, nothing else. */
+    fun handleQrPayload(payload: QrPayload) {
+        _uiState.update {
+            when (payload) {
+                is QrPayload.PinholeTicket -> it.copy(
+                    usePinhole = true,
+                    pinholeTicket = payload.ticket,
+                    userNotice = "Pinhole ticket scanned — press Start to connect"
+                )
+
+                is QrPayload.UdpEndpoint -> it.copy(
+                    usePinhole = false,
+                    targetHost = payload.host,
+                    targetPort = payload.port,
+                    userNotice = "UDP target scanned: ${payload.host}:${payload.port}"
+                )
+
+                is QrPayload.Unknown -> it.copy(
+                    userNotice = "QR code not recognized: showing it in the connection field"
+                )
+            }
+        }
+        if (payload is QrPayload.Unknown) {
+            setPinholeTicket(payload.text.take(200))
+        }
     }
 
     fun applyPreset(preset: ConnectionPreset) {

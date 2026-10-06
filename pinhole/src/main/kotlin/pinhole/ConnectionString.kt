@@ -120,6 +120,14 @@ class ConnectionString(
             return ConnectionString(peerId, natHint, candidates, staticKey, endpointKey)
         }
 
+        /** [parse] for untrusted input (QR codes, share intents): null instead of an exception. */
+        fun tryParse(text: String): ConnectionString? =
+            try {
+                parse(text)
+            } catch (_: IllegalArgumentException) {
+                null
+            }
+
         /** Strict base64url charset, padding tolerated; anything else is malformed. */
         private fun decodeBase64Url(text: String): ByteArray {
             for (c in text) {

@@ -65,6 +65,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.qr.QrScannerScreen
 import com.example.ui.components.AudioDspCard
 import com.example.ui.components.CodecConfigCard
 import com.example.ui.components.NetworkConfigCard
@@ -103,6 +104,7 @@ fun OpusVoiceScreen(
     }
 
     var showInfoDialog by remember { mutableStateOf(false) }
+    var showQrScanner by remember { mutableStateOf(false) }
 
     LaunchedEffect(uiState.userNotice) {
         uiState.userNotice?.let { notice ->
@@ -290,6 +292,7 @@ fun OpusVoiceScreen(
                     onPortChange = { viewModel.setTargetPort(it) },
                     onUsePinholeToggle = { viewModel.setUsePinhole(it) },
                     onPinholeTicketChange = { viewModel.setPinholeTicket(it) },
+                    onScanQr = { showQrScanner = true },
                     onPresetSelect = { viewModel.applyPreset(it) },
                     onLoopbackToggle = { viewModel.toggleLoopback() },
                     onMuteToggle = { viewModel.toggleMute() },
@@ -337,6 +340,17 @@ fun OpusVoiceScreen(
                 Spacer(modifier = Modifier.height(24.dp))
             }
         }
+    }
+
+    if (showQrScanner) {
+        QrScannerScreen(
+            hint = "Point the camera at a connection-string QR code",
+            onPayload = { payload ->
+                showQrScanner = false
+                viewModel.handleQrPayload(payload)
+            },
+            onClose = { showQrScanner = false }
+        )
     }
 
     if (showInfoDialog) {

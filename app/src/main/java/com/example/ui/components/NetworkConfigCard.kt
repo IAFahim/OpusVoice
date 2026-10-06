@@ -20,6 +20,7 @@ import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
+import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.filled.Router
 import androidx.compose.material3.Card
@@ -29,6 +30,7 @@ import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -70,6 +72,7 @@ fun NetworkConfigCard(
     onPortChange: (Int) -> Unit,
     onUsePinholeToggle: (Boolean) -> Unit,
     onPinholeTicketChange: (String) -> Unit,
+    onScanQr: () -> Unit,
     onPresetSelect: (ConnectionPreset) -> Unit,
     onLoopbackToggle: () -> Unit,
     onMuteToggle: () -> Unit,
@@ -192,6 +195,19 @@ fun NetworkConfigCard(
                     label = { Text("Connection string (pinhole1:…)") },
                     singleLine = false,
                     maxLines = 3,
+                    trailingIcon = {
+                        IconButton(
+                            onClick = onScanQr,
+                            modifier = Modifier.testTag("pinhole_scan_qr_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.QrCodeScanner,
+                                contentDescription = "Scan connection QR code",
+                                tint = NeonEmerald,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+                    },
                     modifier = Modifier
                         .fillMaxWidth()
                         .testTag("pinhole_ticket_input"),
@@ -204,7 +220,7 @@ fun NetworkConfigCard(
                     )
                 )
                 Text(
-                    text = "NAT traversal + end-to-end encryption; run OpusVoice.Receiver and paste its ticket",
+                    text = "NAT traversal + end-to-end encryption; run OpusVoice.Receiver and paste or scan its ticket",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -223,6 +239,19 @@ fun NetworkConfigCard(
                     onValueChange = onHostChange,
                     label = { Text("Target IP / Host") },
                     singleLine = true,
+                    trailingIcon = {
+                        IconButton(
+                            onClick = onScanQr,
+                            modifier = Modifier.testTag("udp_scan_qr_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.QrCodeScanner,
+                                contentDescription = "Scan endpoint QR code",
+                                tint = DiscordBlurple,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+                    },
                     modifier = Modifier
                         .weight(1.8f)
                         .testTag("target_ip_input"),
