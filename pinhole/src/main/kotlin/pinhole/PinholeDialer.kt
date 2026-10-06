@@ -205,7 +205,8 @@ class PinholeDialer(
 
         val keys = try {
             SessionKeys.derive(myPeerId, ephPrivate, staticPrivate, cs.peerId, peerEph, peerStatic)
-        } catch (_: IllegalArgumentException) {
+        } catch (e: IllegalArgumentException) {
+            System.err.println("pinhole: derive failed: " + e.message)
             return // low-order point probe: ignore, an honest retry still works
         }
 
@@ -239,6 +240,7 @@ class PinholeDialer(
         }
 
         established = true
+        System.err.println("pinhole: established with peer " + from)
         onConnected?.invoke(from)
     }
 
