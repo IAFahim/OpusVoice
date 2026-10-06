@@ -1,0 +1,6 @@
+{
+  "name": "OpusVoice",
+  "description": "Ultra low-latency VoIP microphone streaming to IP:Port using WebRTC Opus RTP, adaptive jitter buffer, acoustic echo cancellation, noise suppression, and AGC.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
