@@ -18,3 +18,4 @@ local.properties
 debug.keystore
 *.jks
 signing-credentials.txt
+pinhole/build/
