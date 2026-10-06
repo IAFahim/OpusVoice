@@ -55,7 +55,45 @@ The web console also **streams voice**: mic (or a test tone) → WebCodecs Opus 
 Next to plain UDP, the app can stream its RTP through a [Pinhole](https://github.com/IAFahim/Pinhole.Net) session:
 
 1. Run [OpusVoice.Receiver](https://github.com/YouAnd-I/OpusVoice.Receiver) (or any Pinhole.Net node) and copy the printed `pinhole1:…` connection string.
-2. In the app's network card, switch to **Pinhole ticket** and paste the string.
+2. In the app's network card, switch to **Pinhole / iroh** and paste or scan the string.
 3. Start streaming — the phone punches your NAT, completes the encrypted handshake, and sends the same RTP datagrams end-to-end encrypted.
 
-The `pinhole/` module is a pure-Kotlin dialer — connection-string parsing, NAT punch, the v2/v3 triple-DH handshake (X25519 + HKDF-SHA256), and AES-GCM frame sealing with replay protection — verified wire-compatible with Pinhole.Net by a live interop test (`interop/EchoPeer`, run in CI on every push). Supported candidates: Direct and Reflexive; TURN / iroh-relay fallback (symmetric NATs) is future work — see the `InteropTests` for what is covered.
+The `pinhole/` module implements direct UDP, native iroh endpoint tickets/IDs,
+signed HTTP pkarr discovery, and authenticated iroh relay v1/v2 framing in Kotlin.
+The encrypted Pinhole session runs above those routes: triple-DH X25519,
+HKDF-SHA256, and AES-GCM with replay protection. Incoming RTP is connected to
+playback, handshake flights are retried, and validated direct paths can replace
+relay routes while the relay remains available for fallback. TURN is unsupported.
+
+For a native iroh ID/ticket, run the receiver in `iroh` mode:
+
+```bash
+dotnet run --project src/OpusVoice.Receiver -- iroh
+```
+
+This uses Pinhole.Net's `PublishIrohAddress = true`. Its signed native discovery
+record binds the receiver's Ed25519 endpoint ID to its public Pinhole X25519 key
+using `user-data=pinhole-v1:<hex-key>`. The Android client verifies that signature
+before dialing, preserving peer authentication when the native ticket itself
+does not carry the Pinhole key. Persist the receiver's `IdentityKeySeed` to keep
+the same ID across restarts. Ordinary `pinhole1:` tickets still work without this
+discovery lookup.
+
+The app uses iroh-compatible discovery and relay packets with Pinhole's session
+protocol above them. An unchanged native iroh application endpoint needs its own
+compatible packet protocol engine; sharing a relay or endpoint ID does not change
+the application's session protocol.
+
+The repeatable C# ↔ Kotlin test matrix covers nine cases: direct Pinhole, lost
+PACK/HSCK flights, native IDs/tickets with direct and forced relay routes,
+relay-to-direct upgrade, and tampered discovery rejection. It runs in CI.
+
+```bash
+# Requires JDK 21, .NET 10, and the external reference iroh-relay 1.3.0 binary.
+# The relay is a test process; it is not bundled into the Android app.
+IROH_RELAY_BIN=/path/to/iroh-relay dotnet run --project interop/InteropRunner \
+  -p:PinholeRoot=/path/to/Pinhole.Net
+```
+
+These network interop tests run on the JVM. A physical Android phone's
+Wi-Fi/cellular/background/audio matrix has not been validated by this change.

@@ -1,6 +1,7 @@
 package com.example.qr
 
 import pinhole.ConnectionString
+import pinhole.IrohAddress
 
 /**
  * Turns raw QR text into the first matching typed payload. Every QR-enabled feature
@@ -16,6 +17,9 @@ sealed interface QrPayload {
     /** A Pinhole connection string vouching for a peer; [parsed] proves it is well-formed. */
     data class PinholeTicket(val ticket: String, val parsed: ConnectionString) : QrPayload
 
+    /** Native endpoint ticket or ID; its signed Pinhole session key is resolved on connect. */
+    data class IrohEndpoint(val ticket: String, val parsed: IrohAddress) : QrPayload
+
     /** A plain UDP destination: fill the host and port fields. */
     data class UdpEndpoint(val host: String, val port: Int) : QrPayload
 
@@ -25,6 +29,7 @@ sealed interface QrPayload {
     companion object {
         fun parse(raw: String): QrPayload {
             val text = raw.trim()
+            IrohAddress.tryParse(text)?.let { return IrohEndpoint(text, it) }
             ConnectionString.tryParse(text)?.let { return PinholeTicket(ticket = text, parsed = it) }
             parseUdpEndpoint(text)?.let { return it }
             return Unknown(text)

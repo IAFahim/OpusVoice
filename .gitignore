@@ -21,5 +21,7 @@ signing-credentials.txt
 pinhole/build/
 interop/EchoPeer/bin/
 interop/EchoPeer/obj/
+interop/InteropRunner/bin/
+interop/InteropRunner/obj/
 web/node_modules/
 web/dist/

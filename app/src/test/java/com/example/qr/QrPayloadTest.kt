@@ -33,6 +33,18 @@ class QrPayloadTest {
     }
 
     @Test
+    fun nativeIrohTicketsAndIdsAreRecognized() {
+        val id = "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8"
+        val ticket = "endpointaab2cb576phbbpq5odorrz2lycmwpzgwgcn2kdk7dxoimzaskuy3qayaejuhi5dqom5c6l3bobztcljrfzzgk3dbpexg4mbonfzg62bonruw42zpaeah6aaaagaaqaibaaaaaaaaaaaaaaaaaaaaaaaaah776ay"
+        val payload = QrPayload.parse("  " + ticket + "  ") as QrPayload.IrohEndpoint
+        assertEquals(id, payload.parsed.endpointId)
+        assertEquals(ticket, payload.ticket)
+        assertTrue(QrPayload.parse(id) is QrPayload.IrohEndpoint)
+        assertTrue(QrPayload.parse("endpointinvalid") is QrPayload.Unknown)
+        assertTrue(QrPayload.parse("00".repeat(32)) is QrPayload.Unknown)
+    }
+
+    @Test
     fun udpEndpointsParse() {
         assertEquals(
             QrPayload.UdpEndpoint("192.168.1.42", 5004),

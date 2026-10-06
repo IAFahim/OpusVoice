@@ -13,11 +13,13 @@ java {
 
 dependencies {
     api(libs.bouncycastle)
+    implementation(libs.okhttp)
     testImplementation(kotlin("test"))
 }
 
 tasks.test {
     useJUnitPlatform()
+    systemProperty("pinhole.interop.cases", providers.environmentVariable("PINHOLE_INTEROP_CASES").orElse("").get())
     systemProperty(
         "pinhole.ticket",
         providers.gradleProperty("pinholeTicket")

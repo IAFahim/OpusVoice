@@ -175,7 +175,7 @@ fun NetworkConfigCard(
                     onClick = { onUsePinholeToggle(true) },
                     label = {
                         Text(
-                            text = "Pinhole ticket",
+                            text = "Pinhole / iroh",
                             style = MaterialTheme.typography.labelSmall,
                             modifier = Modifier.testTag("pinhole_chip")
                         )
@@ -192,7 +192,7 @@ fun NetworkConfigCard(
                 OutlinedTextField(
                     value = pinholeTicket,
                     onValueChange = onPinholeTicketChange,
-                    label = { Text("Connection string (pinhole1:…)") },
+                    label = { Text("Pinhole ticket or iroh endpoint ID/ticket") },
                     singleLine = false,
                     maxLines = 3,
                     trailingIcon = {
@@ -220,7 +220,7 @@ fun NetworkConfigCard(
                     )
                 )
                 Text(
-                    text = "NAT traversal + end-to-end encryption; run OpusVoice.Receiver and paste or scan its ticket",
+                    text = "Paste or scan the receiver's Pinhole ticket or published iroh endpoint",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

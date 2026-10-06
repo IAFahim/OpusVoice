@@ -2,6 +2,7 @@ package pinhole
 
 import java.net.InetAddress
 import java.net.InetSocketAddress
+import java.net.URI
 
 /** Kind of candidate address a connection string can carry. */
 enum class CandidateKind(val wire: Int) {
@@ -30,6 +31,8 @@ enum class NatHint(val wire: Int) {
 class PinholeCandidate(
     val kind: CandidateKind,
     val address: InetSocketAddress,
+    val relayUrl: URI? = null,
+    val relayKey: ByteArray? = null,
 )
 
 /**
@@ -77,25 +80,7 @@ class ConnectionString(
             val count = reader.byte()
             require(count <= MAX_CANDIDATES) { "connection string carries more than $MAX_CANDIDATES candidates" }
 
-            val candidates = ArrayList<PinholeCandidate>(count)
-            repeat(count) {
-                val address = reader.endpoint()
-                val kind = CandidateKind.fromWire(reader.byte())
-                    ?: throw IllegalArgumentException("unknown candidate kind")
-                when (kind) {
-                    CandidateKind.Relay -> {
-                        reader.endpoint() // relay server
-                        reader.shortText() // username
-                        reader.shortText() // credential
-                    }
-                    CandidateKind.IrohRelay -> {
-                        reader.shortText() // relay URL
-                        reader.bytes(KEY_LENGTH) // relay public key
-                    }
-                    else -> {}
-                }
-                candidates.add(PinholeCandidate(kind, address))
-            }
+            val candidates = readCandidates(reader, count)
 
             val staticKey: ByteArray?
             val endpointKey: ByteArray?
@@ -120,6 +105,40 @@ class ConnectionString(
             return ConnectionString(peerId, natHint, candidates, staticKey, endpointKey)
         }
 
+        internal fun readCandidates(reader: Reader, count: Int): List<PinholeCandidate> {
+            require(count in 0..MAX_CANDIDATES) { "too many Pinhole candidates" }
+            val candidates = ArrayList<PinholeCandidate>(count)
+            repeat(count) {
+                val address = reader.endpoint()
+                val kind = CandidateKind.fromWire(reader.byte())
+                    ?: throw IllegalArgumentException("unknown candidate kind")
+                var relayUrl: URI? = null
+                var relayKey: ByteArray? = null
+                when (kind) {
+                    CandidateKind.Relay -> {
+                        reader.endpoint() // relay server
+                        reader.shortText() // username
+                        reader.shortText() // credential
+                    }
+                    CandidateKind.IrohRelay -> {
+                        relayUrl = validateIrohUrl(URI.create(reader.shortText()))
+                        relayKey = reader.bytes(KEY_LENGTH)
+                        IrohEncoding.key(IrohEncoding.hex(relayKey))
+                    }
+                    else -> {}
+                }
+                candidates.add(PinholeCandidate(kind, address, relayUrl, relayKey))
+            }
+            return candidates
+        }
+
+        internal fun readAnnouncement(body: ByteArray): List<PinholeCandidate> {
+            val reader = Reader(body, 0)
+            val candidates = readCandidates(reader, reader.byte())
+            require(reader.atEnd) { "trailing bytes in Pinhole announcement" }
+            return candidates
+        }
+
         /** [parse] for untrusted input (QR codes, share intents): null instead of an exception. */
         fun tryParse(text: String): ConnectionString? =
             try {
@@ -136,11 +155,12 @@ class ConnectionString(
             }
             val pad = (4 - text.length % 4) % 4
             val base64 = text.replace('-', '+').replace('_', '/') + "=".repeat(pad)
-            return java.util.Base64.getMimeDecoder().decode(base64)
+            return try { org.bouncycastle.util.encoders.Base64.decode(base64) }
+            catch (e: Exception) { throw IllegalArgumentException("invalid base64url payload", e) }
         }
     }
 
-    private class Reader(private val data: ByteArray, var pos: Int) {
+    internal class Reader(private val data: ByteArray, var pos: Int) {
         fun byte(): Int {
             if (pos >= data.size) throw IllegalArgumentException("payload is truncated")
             return data[pos++].toInt() and 0xFF

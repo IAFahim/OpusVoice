@@ -25,6 +25,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.CancellationException
 import pinhole.PinholeDialer
 
 data class ConnectionPreset(
@@ -145,7 +147,8 @@ class OpusVoiceViewModel(application: Application) : AndroidViewModel(applicatio
     )
 
     private var telemetryJob: Job? = null
-    private var pinholeDialer: PinholeDialer? = null
+    @Volatile private var pinholeDialer: PinholeDialer? = null
+    private var pinholeConnectJob: Job? = null
 
     val presets = listOf(
         ConnectionPreset("Local Loopback", "127.0.0.1", 5004, "Test mic, Opus encoding & Jitter Buffer locally"),
@@ -172,8 +175,7 @@ class OpusVoiceViewModel(application: Application) : AndroidViewModel(applicatio
         telemetryJob = viewModelScope.launch {
             while (isActive) {
                 delay(120)
-                // Keep the NAT mapping alive through silent stretches (VAD mute).
-                pinholeDialer?.keepaliveIfIdle()
+                // Pinhole maintains its NAT mapping on its own network worker.
                 val netTelemetry = udpTransport.getTelemetry()
                 val jbStats = jitterBuffer.getSnapshot()
                 _uiState.update {
@@ -250,73 +252,87 @@ class OpusVoiceViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     private fun startPinholeStreaming(ticket: String) {
+        if (pinholeConnectJob?.isActive == true || pinholeDialer?.isConnected == true) return
         if (ticket.isBlank()) {
             _uiState.update {
-                it.copy(
-                    isStreaming = false,
-                    userNotice = "Paste a Pinhole connection string (pinhole1:…) first"
-                )
+                it.copy(isStreaming = false, userNotice = "Paste a Pinhole ticket or iroh endpoint ID/ticket first")
             }
             return
         }
-
         _uiState.update {
-            it.copy(
-                transportState = TransportState.CONNECTING,
-                transportErrorMessage = null,
-                userNotice = "Punching through NAT…"
-            )
+            it.copy(transportState = TransportState.CONNECTING, transportErrorMessage = null,
+                userNotice = "Resolving peer and connecting…")
         }
-
-        viewModelScope.launch(Dispatchers.IO) {
-            val dialer = PinholeDialer(ticket.trim())
-            pinholeDialer = dialer
-            dialer.onConnected = { _ ->
-                _uiState.update {
-                    it.copy(
-                        isPinholeConnected = true,
-                        transportState = TransportState.CONNECTED,
-                        userNotice = "Pinhole session established (encrypted)"
-                    )
-                }
-            }
-            dialer.onClosed = { reason ->
-                _uiState.update {
-                    it.copy(
-                        isPinholeConnected = false,
-                        transportState = if (reason == "closed") TransportState.DISCONNECTED else TransportState.ERROR,
-                        transportErrorMessage = if (reason == "closed") null else reason
-                    )
-                }
-            }
-
+        pinholeConnectJob = viewModelScope.launch(Dispatchers.IO) {
+            var dialer: PinholeDialer? = null
             try {
-                dialer.connect()
-                if (_uiState.value.isListening) {
-                    jitterBuffer.reset()
-                    audioPlayer.start()
+                val connecting = PinholeDialer(ticket.trim())
+                dialer = connecting
+                connecting.onReceived = { bytes ->
+                    if (pinholeDialer === connecting) {
+                        RtpPacket.parse(bytes)?.let { handleIncomingRtpPacket(it) }
+                    }
                 }
-                val started = audioRecorder.startRecording()
-                _uiState.update {
-                    it.copy(
-                        isStreaming = started,
-                        userNotice = if (started) "Streaming via Pinhole" else "AudioRecord failed to start. Check mic permissions."
-                    )
+                connecting.onConnected = {
+                    if (pinholeDialer === connecting) {
+                        _uiState.update {
+                            if (pinholeDialer !== connecting || !connecting.isConnected) it
+                            else it.copy(isPinholeConnected = true, transportState = TransportState.CONNECTED,
+                                userNotice = "Pinhole session established (encrypted)")
+                        }
+                    }
+                }
+                connecting.onClosed = { reason ->
+                    viewModelScope.launch(Dispatchers.Main) {
+                        if (pinholeDialer === connecting) {
+                            pinholeDialer = null
+                            audioRecorder.stopRecording()
+                            audioPlayer.stop()
+                            _uiState.update {
+                                it.copy(isStreaming = false, isPinholeConnected = false,
+                                    transportState = if (reason == "closed") TransportState.DISCONNECTED else TransportState.ERROR,
+                                    transportErrorMessage = if (reason == "closed") null else reason)
+                            }
+                        }
+                    }
+                }
+                withContext(Dispatchers.Main) { pinholeDialer = connecting }
+                connecting.connect()
+                withContext(Dispatchers.Main) {
+                    if (pinholeDialer !== connecting) return@withContext
+                    if (_uiState.value.isListening) {
+                        jitterBuffer.reset()
+                        audioPlayer.start()
+                    }
+                    val started = audioRecorder.startRecording()
+                    if (!started) {
+                        audioPlayer.stop()
+                        connecting.close()
+                        pinholeDialer = null
+                    }
+                    _uiState.update {
+                        it.copy(isStreaming = started, isPinholeConnected = started,
+                            transportState = if (started) TransportState.CONNECTED else TransportState.ERROR,
+                            userNotice = if (started) "Streaming via Pinhole" else "AudioRecord failed to start. Check mic permissions.")
+                    }
                 }
             } catch (e: Exception) {
-                pinholeDialer = null
-                _uiState.update {
-                    it.copy(
-                        isStreaming = false,
-                        transportState = TransportState.ERROR,
-                        transportErrorMessage = "Pinhole: ${e.message}"
-                    )
+                dialer?.close()
+                if (e is CancellationException) throw e
+                if (pinholeDialer === dialer) {
+                    pinholeDialer = null
+                    _uiState.update {
+                        it.copy(isStreaming = false, isPinholeConnected = false, transportState = TransportState.ERROR,
+                            transportErrorMessage = "Pinhole: " + e.message)
+                    }
                 }
             }
         }
     }
 
     fun stopStreaming() {
+        pinholeConnectJob?.cancel()
+        pinholeConnectJob = null
         audioRecorder.stopRecording()
         audioPlayer.stop()
         pinholeDialer?.close()
@@ -329,6 +345,8 @@ class OpusVoiceViewModel(application: Application) : AndroidViewModel(applicatio
                 isStreaming = false,
                 isTransmitting = false,
                 isPinholeConnected = false,
+                transportState = TransportState.DISCONNECTED,
+                transportErrorMessage = null,
                 inputDbLevel = -80f,
                 outputDbLevel = -80f,
                 userNotice = "Stream stopped"
@@ -447,6 +465,7 @@ class OpusVoiceViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun setUsePinhole(enabled: Boolean) {
+        if (enabled != _uiState.value.usePinhole) stopStreaming()
         _uiState.update { it.copy(usePinhole = enabled) }
     }
 
@@ -462,6 +481,12 @@ class OpusVoiceViewModel(application: Application) : AndroidViewModel(applicatio
                     usePinhole = true,
                     pinholeTicket = payload.ticket,
                     userNotice = "Pinhole ticket scanned — press Start to connect"
+                )
+
+                is QrPayload.IrohEndpoint -> it.copy(
+                    usePinhole = true,
+                    pinholeTicket = payload.ticket,
+                    userNotice = "Iroh endpoint selected; its session key will be verified on connect"
                 )
 
                 is QrPayload.UdpEndpoint -> it.copy(
@@ -502,6 +527,7 @@ class OpusVoiceViewModel(application: Application) : AndroidViewModel(applicatio
     override fun onCleared() {
         super.onCleared()
         telemetryJob?.cancel()
+        pinholeConnectJob?.cancel()
         audioRecorder.stopRecording()
         audioPlayer.stop()
         udpTransport.stop()
