@@ -35,6 +35,7 @@ export interface ConnectionString {
 export type QrPayload =
   | { kind: 'pinhole-ticket'; ticket: string; parsed: ConnectionString }
   | { kind: 'udp-endpoint'; host: string; port: number }
+  | { kind: 'ws-endpoint'; url: string; host: string; port: number }
   | { kind: 'unknown'; text: string }
 
 class Reader {
@@ -211,7 +212,21 @@ export function parseQrPayload(raw: string): QrPayload {
   if (parsed) return { kind: 'pinhole-ticket', ticket: text, parsed }
   const udp = parseUdpEndpoint(text)
   if (udp) return { kind: 'udp-endpoint', host: udp.host, port: udp.port }
+  const ws = parseWsEndpoint(text)
+  if (ws) return { kind: 'ws-endpoint', url: text, host: ws.host, port: ws.port }
   return { kind: 'unknown', text }
+}
+
+/** The receiver's ws mode prints `ws://host:port/stream` — the web console's native transport. */
+function parseWsEndpoint(text: string): { host: string; port: number } | null {
+  if (!/^wss?:\/\//i.test(text)) return null
+  try {
+    const parsed = new URL(text)
+    if (!parsed.hostname || parsed.port === '') return null
+    return { host: parsed.hostname, port: Number(parsed.port) }
+  } catch {
+    return null
+  }
 }
 
 function parseUdpEndpoint(text: string): { host: string; port: number } | null {

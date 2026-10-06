@@ -7,10 +7,11 @@ import './styles.css'
 import { parseQrPayload, type QrPayload } from './payload'
 import { acquireWakeLock, openCamera, startDetection, type CameraSession, type Detection } from './scanner'
 import { clearQrCanvas, renderQrCanvas } from './generator'
+import { mixedContentBlocked, VoiceStreamer, webCodecsSupported, type VoiceStats } from './voice'
 
 const HISTORY_KEY = 'opusvoice.qr.history'
 const HISTORY_LIMIT = 20
-const TABS = ['scan', 'generate', 'history'] as const
+const TABS = ['voice', 'scan', 'generate', 'history'] as const
 type TabName = (typeof TABS)[number]
 
 interface HistoryEntry {
@@ -61,7 +62,7 @@ for (const btn of document.querySelectorAll<HTMLButtonElement>('[data-tab]')) {
 
 interface PayloadDescription {
   badge: string
-  className: 'ticket' | 'udp' | 'text'
+  className: 'ticket' | 'udp' | 'ws' | 'text'
   title: string
   rows: Array<[string, string]>
 }
@@ -91,6 +92,17 @@ function describePayload(payload: QrPayload): PayloadDescription {
           ['Port', String(payload.port)]
         ]
       }
+    case 'ws-endpoint':
+      return {
+        badge: 'WS TARGET',
+        className: 'ws',
+        title: 'Voice receiver decoded',
+        rows: [
+          ['URL', payload.url],
+          ['Host', payload.host],
+          ['Port', String(payload.port)]
+        ]
+      }
     default:
       return {
         badge: 'TEXT',
@@ -107,6 +119,8 @@ function payloadRawText(payload: QrPayload): string {
       return payload.ticket
     case 'udp-endpoint':
       return `udp://${payload.host}:${payload.port}`
+    case 'ws-endpoint':
+      return payload.url
     default:
       return payload.text
   }
@@ -152,6 +166,14 @@ function renderResultCard(container: HTMLElement, payload: QrPayload, withAction
     actions.className = 'row'
     actions.append(button('Copy', () => copyText(raw)))
     if (navigator.share) actions.append(button('Share', () => navigator.share({ text: raw }).catch(() => undefined)))
+    if (payload.kind === 'ws-endpoint') {
+      actions.append(
+        button('Stream voice there', () => {
+          setVoiceTarget(payload.url)
+          switchTab('voice')
+        })
+      )
+    }
     actions.append(
       button('Show as QR', () => {
         setGenerateInput(raw)
@@ -359,7 +381,12 @@ function timeAgo(when: number): string {
 const BADGE_LABELS: Record<QrPayload['kind'], string> = {
   'pinhole-ticket': 'PINHOLE',
   'udp-endpoint': 'UDP',
+  'ws-endpoint': 'WS',
   unknown: 'TEXT'
+}
+
+function badgeClass(kind: QrPayload['kind']): string {
+  return kind === 'unknown' ? 'text' : kind === 'pinhole-ticket' ? 'ticket' : kind === 'udp-endpoint' ? 'udp' : 'ws'
 }
 
 function renderHistory(): void {
@@ -371,7 +398,7 @@ function renderHistory(): void {
   for (const entry of entries) {
     const item = document.createElement('li')
     const badge = document.createElement('span')
-    badge.className = `badge mini ${entry.kind === 'pinhole-ticket' ? 'ticket' : entry.kind === 'udp-endpoint' ? 'udp' : 'text'}`
+    badge.className = `badge mini ${badgeClass(entry.kind)}`
     badge.textContent = BADGE_LABELS[entry.kind]
     const preview = document.createElement('span')
     preview.className = 'preview'
@@ -411,6 +438,97 @@ $('#clear-history').addEventListener('click', () => {
   renderHistory()
   toast('History cleared')
 })
+
+// ---- voice ------------------------------------------------------------------
+
+const voiceTarget = $<HTMLInputElement>('#voice-target')
+const voiceStatus = $('#voice-status')
+const voiceError = $('#voice-error')
+const voiceStatsPanel = $('#voice-stats')
+let streamer: VoiceStreamer | null = null
+
+function setVoiceTarget(url: string): void {
+  voiceTarget.value = url
+}
+
+function normalizeVoiceTarget(raw: string): string | null {
+  const text = raw.trim()
+  if (!text) return null
+  const withScheme = /^wss?:\/\//i.test(text) ? text : `ws://${text}`
+  try {
+    const parsed = new URL(withScheme)
+    if (parsed.protocol !== 'ws:' && parsed.protocol !== 'wss:') return null
+    if (!parsed.hostname) return null
+    return parsed.toString()
+  } catch {
+    return null
+  }
+}
+
+function renderVoiceStats(stats: VoiceStats): void {
+  voiceStatsPanel.hidden = stats.state === 'idle'
+  $<HTMLSpanElement>('#stat-packets').textContent = String(stats.packets)
+  $<HTMLSpanElement>('#stat-dropped').textContent = String(stats.dropped)
+  $<HTMLSpanElement>('#stat-seconds').textContent = stats.seconds.toFixed(1)
+  $<HTMLSpanElement>('#stat-kbps').textContent =
+    stats.seconds > 0.5 ? String(Math.round((stats.bytes * 8) / 1000 / stats.seconds)) : '0'
+}
+
+function setVoiceRunning(running: boolean): void {
+  $('#voice-start').hidden = running
+  $('#voice-stop').hidden = !running
+  if (!running) {
+    voiceStatus.textContent = 'idle'
+    voiceError.textContent = ''
+  }
+}
+
+$('#voice-start').addEventListener('click', async () => {
+  voiceError.textContent = ''
+  const url = normalizeVoiceTarget(voiceTarget.value)
+  if (!url) {
+    voiceError.textContent = 'Enter a receiver target like ws://192.168.1.42:8080/stream'
+    return
+  }
+  if (!webCodecsSupported()) {
+    voiceError.textContent = 'This browser has no WebCodecs audio support — voice needs Chrome or Edge.'
+    return
+  }
+  if (mixedContentBlocked(url, location.protocol === 'https:')) {
+    voiceError.textContent =
+      'Browsers block ws:// to LAN IPs from an https page. Use a ws://localhost target, or run this console locally (npm run dev).'
+    return
+  }
+  localStorage.setItem('opusvoice.voice.target', url)
+  streamer = new VoiceStreamer({
+    url,
+    source: $<HTMLSelectElement>('#voice-source').value === 'mic' ? 'mic' : 'tone',
+    bitrate: Number($<HTMLSelectElement>('#voice-bitrate').value) || 32000,
+    monitor: $<HTMLInputElement>('#voice-monitor').checked,
+    onStats: stats => {
+      voiceStatus.textContent = `${stats.state} → ${url} (${stats.packets} packets)`
+      renderVoiceStats(stats)
+      if (stats.state === 'idle') setVoiceRunning(false)
+    },
+    onError: message => {
+      voiceError.textContent = message
+    }
+  })
+  setVoiceRunning(true)
+  voiceStatus.textContent = `connecting → ${url}`
+  try {
+    await streamer.start()
+  } catch (e) {
+    voiceError.textContent = e instanceof Error ? e.message : String(e)
+    setVoiceRunning(false)
+  }
+})
+
+$('#voice-stop').addEventListener('click', () => streamer?.stop())
+
+// Remember the last working target; ?target=… overrides (handy for kiosk setups).
+const savedTarget = new URLSearchParams(location.search).get('target') ?? localStorage.getItem('opusvoice.voice.target')
+if (savedTarget) voiceTarget.value = savedTarget
 
 renderHistory()
 void renderGenerate()

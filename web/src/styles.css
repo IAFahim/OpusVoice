@@ -507,6 +507,116 @@ main {
   transform: translate(-50%, 0);
 }
 
+/* ---- voice ---- */
+
+.voice-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+@media (max-width: 520px) {
+  .voice-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+select {
+  width: 100%;
+  padding: 10px 12px;
+  background: var(--bg);
+  border: 1px solid var(--highlight);
+  border-radius: 10px;
+  color: var(--text);
+  font: inherit;
+  font-size: 14.5px;
+}
+
+select:focus-visible,
+.target:focus-visible {
+  outline: 2px solid var(--cyan);
+  outline-offset: 1px;
+}
+
+.target {
+  display: block;
+  width: 100%;
+  padding: 12px 14px;
+  background: var(--bg);
+  border: 1px solid var(--highlight);
+  border-radius: 10px;
+  color: var(--text);
+  font: 13px/1.5 ui-monospace, 'Cascadia Code', 'JetBrains Mono', Menlo, Consolas, monospace;
+}
+
+.hint {
+  margin: 8px 0 14px;
+  line-height: 1.45;
+}
+
+.hint code,
+.about code {
+  font: 12px ui-monospace, Menlo, Consolas, monospace;
+  background: var(--surface-variant);
+  border: 1px solid var(--highlight);
+  border-radius: 5px;
+  padding: 1px 5px;
+  color: var(--glow);
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14.5px;
+  color: var(--text-2);
+  margin: 4px 0 14px;
+  cursor: pointer;
+}
+
+.check input {
+  accent-color: var(--emerald);
+  width: 16px;
+  height: 16px;
+}
+
+.stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  margin-top: 14px;
+}
+
+@media (max-width: 520px) {
+  .stats {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.stats > div {
+  background: var(--surface-variant);
+  border: 1px solid var(--highlight);
+  border-radius: 10px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.stat {
+  font-size: 20px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--glow);
+}
+
+.badge.ws, .badge.mini.ws {
+  background: rgba(6, 182, 212, 0.14);
+  color: #67e8f9;
+  border: 1px solid rgba(6, 182, 212, 0.5);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .corners i {
     animation: none;

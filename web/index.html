@@ -11,7 +11,8 @@
   <header class="top">
     <div class="brand"><span class="logo" aria-hidden="true"></span><span>OpusVoice <em>QR&nbsp;Console</em></span></div>
     <nav class="tabs" aria-label="Sections">
-      <button role="tab" aria-selected="true" data-tab="scan" class="active">Scan</button>
+      <button role="tab" aria-selected="true" data-tab="voice" class="active">Voice</button>
+      <button role="tab" aria-selected="false" data-tab="scan">Scan</button>
       <button role="tab" aria-selected="false" data-tab="generate">Generate</button>
       <button role="tab" aria-selected="false" data-tab="history">History</button>
     </nav>
@@ -30,7 +31,52 @@
   </div>
 
   <main>
-    <section id="tab-scan" class="tab" role="tabpanel" aria-label="Scan">
+    <section id="tab-voice" class="tab" role="tabpanel" aria-label="Voice">
+      <div class="card">
+        <p class="lead">Stream live Opus voice to the receiver — the same RTP stream the Android app sends, over a WebSocket the browser is allowed to open.</p>
+        <div class="voice-grid">
+          <div>
+            <label class="field-label" for="voice-source">Source</label>
+            <select id="voice-source">
+              <option value="tone">Test tone (440 Hz)</option>
+              <option value="mic">Microphone</option>
+            </select>
+          </div>
+          <div>
+            <label class="field-label" for="voice-bitrate">Bitrate</label>
+            <select id="voice-bitrate">
+              <option value="16000">16 kb/s</option>
+              <option value="32000" selected>32 kb/s</option>
+              <option value="64000">64 kb/s</option>
+              <option value="96000">96 kb/s</option>
+              <option value="128000">128 kb/s</option>
+            </select>
+          </div>
+        </div>
+        <label class="field-label" for="voice-target">Receiver target (ws://host:port/stream)</label>
+        <input id="voice-target" class="target" type="text" spellcheck="false" autocomplete="off" placeholder="ws://192.168.1.42:8080/stream" />
+        <p class="muted hint">
+          Start one with <code>dotnet run --project src/OpusVoice.Receiver -- ws 8080</code> — it prints a
+          <code>ws://</code> QR next to the usual <code>udp://</code> one. Browser rule: from this https page only
+          <code>ws://localhost</code> is reachable; for LAN IPs run the console locally (<code>npm run dev</code>).
+        </p>
+        <label class="check"><input type="checkbox" id="voice-monitor" /> Monitor — hear the encoded round-trip</label>
+        <div class="row">
+          <button id="voice-start" class="btn primary">●&nbsp;Start streaming</button>
+          <button id="voice-stop" class="btn" hidden>■&nbsp;Stop</button>
+        </div>
+        <p id="voice-status" class="muted">idle</p>
+        <p id="voice-error" class="error" role="alert"></p>
+        <div id="voice-stats" class="stats" hidden>
+          <div><span class="stat" id="stat-packets">0</span><span class="muted">packets</span></div>
+          <div><span class="stat" id="stat-kbps">0</span><span class="muted">kb/s sent</span></div>
+          <div><span class="stat" id="stat-dropped">0</span><span class="muted">dropped</span></div>
+          <div><span class="stat" id="stat-seconds">0.0</span><span class="muted">seconds</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-scan" class="tab" role="tabpanel" aria-label="Scan" hidden>
       <div class="card">
         <div id="scan-idle">
           <p class="lead">Point the camera at a connection-string QR code.</p>

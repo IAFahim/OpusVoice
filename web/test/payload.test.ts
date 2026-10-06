@@ -58,6 +58,24 @@ describe('arbitrary text', () => {
   })
 })
 
+describe('ws endpoints', () => {
+  it('parses the receiver ws bridge QR', () => {
+    expect(parseQrPayload('ws://192.168.1.42:8080/stream')).toEqual({
+      kind: 'ws-endpoint',
+      url: 'ws://192.168.1.42:8080/stream',
+      host: '192.168.1.42',
+      port: 8080
+    })
+    expect(parseQrPayload('WSS://example.com:9000/stream')).toMatchObject({ kind: 'ws-endpoint', port: 9000 })
+  })
+
+  it('rejects ws urls without a usable host:port', () => {
+    expect(parseQrPayload('ws:///stream').kind).toBe('unknown')
+    expect(parseQrPayload('ws://host/stream').kind).toBe('unknown') // no port
+    expect(parseQrPayload('http://host:8080/stream').kind).toBe('unknown')
+  })
+})
+
 describe('connection string internals', () => {
   it('tryParse returns null instead of throwing', () => {
     expect(tryParseConnectionString('pinhole1:zzz')).toBeNull()

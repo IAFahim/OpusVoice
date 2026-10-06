@@ -42,6 +42,12 @@ Signing uses the repo secrets `KEYSTORE_BASE64`, `STORE_PASSWORD`, and `KEY_PASS
 - **Baseline profile:** `app/src/main/baseline-prof.txt` pre-compiles the startup/streaming hot path via `androidx.profileinstaller`. Replacing the hand-written rules with device-measured ones from a Macrobenchmark module is future work.
 - **No DI / navigation framework (deliberate):** single-screen app; Hilt and Navigation 3 become worthwhile with a second screen or injected repositories.
 
+## QR discovery (scan, don't type)
+
+The Android app scans connection-string QR codes straight into its transport fields (camera permission is optional; a paste path always exists). The [C# receiver](https://github.com/YouAnd-I/OpusVoice.Receiver) prints its ticket — and its `udp://` LAN target — as a terminal QR code for the phone to scan.
+
+The same system runs in the browser at **https://iafahim.github.io/OpusVoice/** (the `web/` app, deployed by `.github/workflows/web.yml`): scan with the camera or paste, get the typed payload — peer ID, NAT hint, candidates, pinned keys — and turn any string into a scannable QR. It's an installable PWA and all scanning happens on-device.
+
 ## Pinhole transport (NAT traversal + E2E encryption)
 
 Next to plain UDP, the app can stream its RTP through a [Pinhole](https://github.com/IAFahim/Pinhole.Net) session:
