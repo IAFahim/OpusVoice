@@ -83,13 +83,15 @@ class PinholeDialer(
                     if (established || closed.get()) break
                     try {
                         socket.send(DatagramPacket(puncFrame, puncFrame.size, candidate.address))
-                    } catch (_: Exception) {
+                    } catch (e: Exception) {
                         // one unroutable candidate must not kill the punch
+                        System.err.println("pinhole: punch to ${'$'}{candidate.address} failed: ${'$'}e")
                     }
                 }
                 Thread.sleep(PUNCH_INTERVAL_MS)
             }
             if (!established && !closed.get()) {
+                System.err.println("pinhole: connect timed out after ${'$'}connectTimeoutMs ms (punched ${'$'}{punchable.size} candidates)")
                 fail("connect timeout after ${connectTimeoutMs}ms")
             }
         }

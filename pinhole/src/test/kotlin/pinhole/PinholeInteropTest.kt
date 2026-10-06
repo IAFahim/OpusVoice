@@ -24,6 +24,9 @@ class PinholeInteropTest {
         assumeTrue(ticket.isNotEmpty(), "PINHOLE_TICKET not set; interop test skipped")
 
         val dialer = PinholeDialer(ticket, connectTimeoutMs = 20_000)
+        ConnectionString.parse(ticket).candidates.forEach {
+            println("interop: candidate ${it.kind} ${it.address}")
+        }
         val echoes = ConcurrentLinkedQueue<ByteArray>()
         val echoed = CountDownLatch(12)
         val connected = CountDownLatch(1)

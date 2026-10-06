@@ -95,16 +95,18 @@ jobs:
 
       - name: Start echo peer
         run: |
-          dotnet interop/EchoPeer/bin/Debug/net10.0/EchoPeer.dll > echo-peer.log 2>&1 &
+          nohup dotnet interop/EchoPeer/bin/Debug/net10.0/EchoPeer.dll > echo-peer.log 2>&1 &
+          disown
           for _ in $(seq 1 60); do grep -q TICKET= echo-peer.log && exit 0; sleep 1; done
           cat echo-peer.log
           exit 1
 
       - name: Kotlin dialer interop test
-        env:
-          PINHOLE_TICKET: pinhole1-placeholder
         run: |
+          pgrep -af EchoPeer || true
+          tail -3 echo-peer.log
           export PINHOLE_TICKET="$(grep -oE 'pinhole1:[A-Za-z0-9_-]+' echo-peer.log | head -1)"
+          test -n "$PINHOLE_TICKET"
           ./gradlew :pinhole:test --tests '*Interop*' --rerun --stacktrace
 
   release:
