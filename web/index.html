@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#0F111A" />
+  <meta name="description" content="Scan and share Pinhole connection strings — QR discovery for OpusVoice, no typing." />
+  <title>OpusVoice · QR Console</title>
+</head>
+<body>
+  <header class="top">
+    <div class="brand"><span class="logo" aria-hidden="true"></span><span>OpusVoice <em>QR&nbsp;Console</em></span></div>
+    <nav class="tabs" aria-label="Sections">
+      <button role="tab" aria-selected="true" data-tab="scan" class="active">Scan</button>
+      <button role="tab" aria-selected="false" data-tab="generate">Generate</button>
+      <button role="tab" aria-selected="false" data-tab="history">History</button>
+    </nav>
+    <button class="icon-btn" popovertarget="about" aria-label="About">i</button>
+  </header>
+
+  <div id="about" popover class="about card">
+    <h3>What is this?</h3>
+    <p>The web twin of the Android app's QR system: scan a code, get typed data.</p>
+    <ul>
+      <li><b>pinhole1:…</b> — a Pinhole connection-string ticket</li>
+      <li><b>udp://host:port</b> — a plain RTP target</li>
+      <li>anything else is shown as raw text — nothing is silently lost</li>
+    </ul>
+    <p>Scanning runs entirely on-device: the camera feed never leaves this page. Installable as a PWA.</p>
+  </div>
+
+  <main>
+    <section id="tab-scan" class="tab" role="tabpanel" aria-label="Scan">
+      <div class="card">
+        <div id="scan-idle">
+          <p class="lead">Point the camera at a connection-string QR code.</p>
+          <div class="row">
+            <button id="start-scan" class="btn primary">▶&nbsp;Start camera</button>
+          </div>
+          <p id="scan-error" class="error" role="alert"></p>
+          <details class="paste">
+            <summary>No camera? Paste the code instead</summary>
+            <textarea id="paste-input" rows="3" spellcheck="false" placeholder="pinhole1:… or udp://host:port"></textarea>
+            <div class="row"><button id="paste-parse" class="btn">Parse pasted code</button></div>
+          </details>
+        </div>
+        <div id="scan-live" hidden>
+          <div class="viewfinder">
+            <video id="scan-video" playsinline muted autoplay></video>
+            <div class="corners" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+          </div>
+          <div class="row">
+            <button id="stop-scan" class="btn">Stop</button>
+            <button id="torch" class="btn" hidden>✦ Torch</button>
+          </div>
+          <p id="scan-status" class="muted">starting camera…</p>
+        </div>
+        <div id="scan-result"></div>
+      </div>
+    </section>
+
+    <section id="tab-generate" class="tab" role="tabpanel" aria-label="Generate" hidden>
+      <div class="card">
+        <p class="lead">Turn a connection string (or any text) into a code the phone can scan.</p>
+        <label class="field-label" for="qr-input">Text or connection string</label>
+        <textarea id="qr-input" rows="4" spellcheck="false" placeholder="pinhole1:… or udp://host:port"></textarea>
+        <div class="gen-grid">
+          <div class="qr-wrap">
+            <canvas id="qr-canvas" width="320" height="320" aria-label="Generated QR code"></canvas>
+            <p id="qr-empty" class="muted">QR appears here</p>
+          </div>
+          <div id="qr-details" class="details"></div>
+        </div>
+        <div class="row">
+          <button id="copy-text" class="btn">Copy text</button>
+          <button id="download-png" class="btn">Download PNG</button>
+          <button id="share-text" class="btn" hidden>Share</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-history" class="tab" role="tabpanel" aria-label="History" hidden>
+      <div class="card">
+        <div class="row space">
+          <p class="lead">Scanned codes, newest first — kept on this device only.</p>
+          <button id="clear-history" class="btn danger" hidden>Clear</button>
+        </div>
+        <ul id="history-list" class="history"></ul>
+        <p id="history-empty" class="muted">Nothing scanned yet.</p>
+        <div id="history-detail"></div>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast" role="status"></div>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
