@@ -63,9 +63,13 @@ fun NetworkConfigCard(
     isLoopbackMode: Boolean,
     isMuted: Boolean,
     isListening: Boolean,
+    usePinhole: Boolean,
+    pinholeTicket: String,
     presets: List<ConnectionPreset>,
     onHostChange: (String) -> Unit,
     onPortChange: (Int) -> Unit,
+    onUsePinholeToggle: (Boolean) -> Unit,
+    onPinholeTicketChange: (String) -> Unit,
     onPresetSelect: (ConnectionPreset) -> Unit,
     onLoopbackToggle: () -> Unit,
     onMuteToggle: () -> Unit,
@@ -73,7 +77,7 @@ fun NetworkConfigCard(
     modifier: Modifier = Modifier
 ) {
     val (statusLabel, statusColor) = when (transportState) {
-        TransportState.CONNECTED -> "Active (UDP)" to NeonEmerald
+        TransportState.CONNECTED -> (if (usePinhole) "Active (Pinhole)" else "Active (UDP)") to NeonEmerald
         TransportState.CONNECTING -> "Connecting..." to AmberWarning
         TransportState.DISCONNECTED -> "Idle" to MaterialTheme.colorScheme.onSurfaceVariant
         TransportState.ERROR -> "Error" to CrimsonError
@@ -149,11 +153,71 @@ fun NetworkConfigCard(
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            // IP & Port Inputs
+            // Transport mode: plain UDP to IP:Port, or a Pinhole connection string
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
+                FilterChip(
+                    selected = !usePinhole,
+                    onClick = { onUsePinholeToggle(false) },
+                    label = { Text("UDP IP : Port", style = MaterialTheme.typography.labelSmall) },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = DiscordBlurple,
+                        selectedLabelColor = MaterialTheme.colorScheme.onPrimary
+                    )
+                )
+                FilterChip(
+                    selected = usePinhole,
+                    onClick = { onUsePinholeToggle(true) },
+                    label = {
+                        Text(
+                            text = "Pinhole ticket",
+                            style = MaterialTheme.typography.labelSmall,
+                            modifier = Modifier.testTag("pinhole_chip")
+                        )
+                    },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = NeonEmerald,
+                        selectedLabelColor = MaterialTheme.colorScheme.onPrimary
+                    )
+                )
+            }
+
+            if (usePinhole) {
+                Spacer(modifier = Modifier.height(10.dp))
+                OutlinedTextField(
+                    value = pinholeTicket,
+                    onValueChange = onPinholeTicketChange,
+                    label = { Text("Connection string (pinhole1:…)") },
+                    singleLine = false,
+                    maxLines = 3,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("pinhole_ticket_input"),
+                    shape = RoundedCornerShape(12.dp),
+                    textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = NeonEmerald,
+                        unfocusedContainerColor = MaterialTheme.colorScheme.surface,
+                        focusedContainerColor = MaterialTheme.colorScheme.surface
+                    )
+                )
+                Text(
+                    text = "NAT traversal + end-to-end encryption; run OpusVoice.Receiver and paste its ticket",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            if (!usePinhole) {
+                Spacer(modifier = Modifier.height(14.dp))
+
+                // IP & Port Inputs
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
                 OutlinedTextField(
                     value = targetHost,
                     onValueChange = onHostChange,
@@ -223,6 +287,8 @@ fun NetworkConfigCard(
                         )
                     )
                 }
+            }
+
             }
 
             Spacer(modifier = Modifier.height(14.dp))

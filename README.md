@@ -41,3 +41,13 @@ Signing uses the repo secrets `KEYSTORE_BASE64`, `STORE_PASSWORD`, and `KEY_PASS
 - **R8 + resource shrinking** are enabled on release builds, and CI runs a signed `assembleRelease` on every push so minification breakage surfaces immediately.
 - **Baseline profile:** `app/src/main/baseline-prof.txt` pre-compiles the startup/streaming hot path via `androidx.profileinstaller`. Replacing the hand-written rules with device-measured ones from a Macrobenchmark module is future work.
 - **No DI / navigation framework (deliberate):** single-screen app; Hilt and Navigation 3 become worthwhile with a second screen or injected repositories.
+
+## Pinhole transport (NAT traversal + E2E encryption)
+
+Next to plain UDP, the app can stream its RTP through a [Pinhole](https://github.com/IAFahim/Pinhole.Net) session:
+
+1. Run [OpusVoice.Receiver](https://github.com/YouAnd-I/OpusVoice.Receiver) (or any Pinhole.Net node) and copy the printed `pinhole1:…` connection string.
+2. In the app's network card, switch to **Pinhole ticket** and paste the string.
+3. Start streaming — the phone punches your NAT, completes the encrypted handshake, and sends the same RTP datagrams end-to-end encrypted.
+
+The `pinhole/` module is a pure-Kotlin dialer — connection-string parsing, NAT punch, the v2/v3 triple-DH handshake (X25519 + HKDF-SHA256), and AES-GCM frame sealing with replay protection — verified wire-compatible with Pinhole.Net by a live interop test (`interop/EchoPeer`, run in CI on every push). Supported candidates: Direct and Reflexive; TURN / iroh-relay fallback (symmetric NATs) is future work — see the `InteropTests` for what is covered.

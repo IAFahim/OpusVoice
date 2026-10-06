@@ -36,7 +36,7 @@ jobs:
             -dname "CN=Android Debug,O=Android,C=US"
 
       - name: Build debug APK and run unit tests
-        run: ./gradlew assembleDebug testDebugUnitTest --stacktrace
+        run: ./gradlew :pinhole:test assembleDebug testDebugUnitTest --stacktrace
 
       - name: Release build smoke check (R8 + resource shrinking)
         env:
@@ -63,6 +63,49 @@ jobs:
           name: opusvoice-debug-apk
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: warn
+
+  interop:
+    name: Pinhole interop (.NET node ↔ Kotlin dialer)
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Checkout Pinhole.Net
+        uses: actions/checkout@v5
+        with:
+          repository: IAFahim/Pinhole.Net
+          path: Pinhole.Net
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Build echo peer
+        run: dotnet build interop/EchoPeer -p:PinholeRoot="$GITHUB_WORKSPACE/Pinhole.Net" -v q --nologo
+
+      - name: Start echo peer
+        run: |
+          dotnet interop/EchoPeer/bin/Debug/net10.0/EchoPeer.dll > echo-peer.log 2>&1 &
+          for _ in $(seq 1 60); do grep -q TICKET= echo-peer.log && exit 0; sleep 1; done
+          cat echo-peer.log
+          exit 1
+
+      - name: Kotlin dialer interop test
+        env:
+          PINHOLE_TICKET: pinhole1-placeholder
+        run: |
+          export PINHOLE_TICKET="$(grep -oE 'pinhole1:[A-Za-z0-9_-]+' echo-peer.log | head -1)"
+          ./gradlew :pinhole:test --tests '*Interop*' --rerun --stacktrace
 
   release:
     name: Signed release build & GitHub Release

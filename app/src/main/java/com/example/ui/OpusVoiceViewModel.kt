@@ -15,6 +15,7 @@ import com.example.webrtc.NetworkTelemetry
 import com.example.webrtc.RtpPacket
 import com.example.webrtc.TransportState
 import com.example.webrtc.UdpTransport
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -23,6 +24,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import pinhole.PinholeDialer
 
 data class ConnectionPreset(
     val title: String,
@@ -77,6 +79,11 @@ data class OpusVoiceUiState(
     val transportState: TransportState = TransportState.DISCONNECTED,
     val transportErrorMessage: String? = null,
     val networkTelemetry: NetworkTelemetry = NetworkTelemetry(),
+
+    // Pinhole transport (NAT traversal + E2E encryption via a connection string)
+    val usePinhole: Boolean = false,
+    val pinholeTicket: String = "",
+    val isPinholeConnected: Boolean = false,
 
     // User Message / Snackbar
     val userNotice: String? = null
@@ -137,6 +144,7 @@ class OpusVoiceViewModel(application: Application) : AndroidViewModel(applicatio
     )
 
     private var telemetryJob: Job? = null
+    private var pinholeDialer: PinholeDialer? = null
 
     val presets = listOf(
         ConnectionPreset("Local Loopback", "127.0.0.1", 5004, "Test mic, Opus encoding & Jitter Buffer locally"),
@@ -163,6 +171,8 @@ class OpusVoiceViewModel(application: Application) : AndroidViewModel(applicatio
         telemetryJob = viewModelScope.launch {
             while (isActive) {
                 delay(120)
+                // Keep the NAT mapping alive through silent stretches (VAD mute).
+                pinholeDialer?.keepaliveIfIdle()
                 val netTelemetry = udpTransport.getTelemetry()
                 val jbStats = jitterBuffer.getSnapshot()
                 _uiState.update {
@@ -180,6 +190,15 @@ class OpusVoiceViewModel(application: Application) : AndroidViewModel(applicatio
             // Self-test: feed packet directly through jitter buffer
             jitterBuffer.push(packet)
         }
+        val dialer = pinholeDialer
+        if (dialer != null && dialer.isConnected) {
+            // Same RTP bytes, tunneled through the encrypted Pinhole session.
+            try {
+                dialer.send(packet.toByteArray())
+            } catch (_: Exception) {
+            }
+            return
+        }
         // Send to network target via UDP
         udpTransport.sendPacket(packet)
     }
@@ -192,6 +211,12 @@ class OpusVoiceViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun startStreaming() {
         val state = _uiState.value
+
+        if (state.usePinhole) {
+            startPinholeStreaming(state.pinholeTicket)
+            return
+        }
+
         val host = state.targetHost
         val port = state.targetPort
 
@@ -223,9 +248,78 @@ class OpusVoiceViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    private fun startPinholeStreaming(ticket: String) {
+        if (ticket.isBlank()) {
+            _uiState.update {
+                it.copy(
+                    isStreaming = false,
+                    userNotice = "Paste a Pinhole connection string (pinhole1:…) first"
+                )
+            }
+            return
+        }
+
+        _uiState.update {
+            it.copy(
+                transportState = TransportState.CONNECTING,
+                transportErrorMessage = null,
+                userNotice = "Punching through NAT…"
+            )
+        }
+
+        viewModelScope.launch(Dispatchers.IO) {
+            val dialer = PinholeDialer(ticket.trim())
+            pinholeDialer = dialer
+            dialer.onConnected = { _ ->
+                _uiState.update {
+                    it.copy(
+                        isPinholeConnected = true,
+                        transportState = TransportState.CONNECTED,
+                        userNotice = "Pinhole session established (encrypted)"
+                    )
+                }
+            }
+            dialer.onClosed = { reason ->
+                _uiState.update {
+                    it.copy(
+                        isPinholeConnected = false,
+                        transportState = if (reason == "closed") TransportState.DISCONNECTED else TransportState.ERROR,
+                        transportErrorMessage = if (reason == "closed") null else reason
+                    )
+                }
+            }
+
+            try {
+                dialer.connect()
+                if (_uiState.value.isListening) {
+                    jitterBuffer.reset()
+                    audioPlayer.start()
+                }
+                val started = audioRecorder.startRecording()
+                _uiState.update {
+                    it.copy(
+                        isStreaming = started,
+                        userNotice = if (started) "Streaming via Pinhole" else "AudioRecord failed to start. Check mic permissions."
+                    )
+                }
+            } catch (e: Exception) {
+                pinholeDialer = null
+                _uiState.update {
+                    it.copy(
+                        isStreaming = false,
+                        transportState = TransportState.ERROR,
+                        transportErrorMessage = "Pinhole: ${e.message}"
+                    )
+                }
+            }
+        }
+    }
+
     fun stopStreaming() {
         audioRecorder.stopRecording()
         audioPlayer.stop()
+        pinholeDialer?.close()
+        pinholeDialer = null
         udpTransport.stop()
         jitterBuffer.reset()
 
@@ -233,6 +327,7 @@ class OpusVoiceViewModel(application: Application) : AndroidViewModel(applicatio
             it.copy(
                 isStreaming = false,
                 isTransmitting = false,
+                isPinholeConnected = false,
                 inputDbLevel = -80f,
                 outputDbLevel = -80f,
                 userNotice = "Stream stopped"
@@ -350,6 +445,14 @@ class OpusVoiceViewModel(application: Application) : AndroidViewModel(applicatio
         _uiState.update { it.copy(targetPort = port) }
     }
 
+    fun setUsePinhole(enabled: Boolean) {
+        _uiState.update { it.copy(usePinhole = enabled) }
+    }
+
+    fun setPinholeTicket(ticket: String) {
+        _uiState.update { it.copy(pinholeTicket = ticket) }
+    }
+
     fun applyPreset(preset: ConnectionPreset) {
         _uiState.update {
             it.copy(
@@ -374,6 +477,7 @@ class OpusVoiceViewModel(application: Application) : AndroidViewModel(applicatio
         audioRecorder.stopRecording()
         audioPlayer.stop()
         udpTransport.stop()
+        pinholeDialer?.close()
         dspManager.release()
         opusCodec.release()
     }
