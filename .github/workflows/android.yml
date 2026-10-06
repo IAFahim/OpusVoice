@@ -109,6 +109,13 @@ jobs:
           test -n "$PINHOLE_TICKET"
           ./gradlew :pinhole:test --tests '*Interop*' --rerun --stacktrace
 
+      - name: Upload interop test report
+        if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: interop-test-report
+          path: pinhole/build/reports/tests/
+
   release:
     name: Signed release build & GitHub Release
     if: startsWith(github.ref, 'refs/tags/v')

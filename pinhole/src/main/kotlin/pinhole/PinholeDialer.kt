@@ -180,6 +180,10 @@ class PinholeDialer(
     }
 
     private fun handlePack(frame: ByteArray, length: Int, from: InetSocketAddress) {
+        // The peer may answer the same punch from several of its addresses; the first
+        // PACK owns the session and the answered path, later ones are plain retransmits.
+        if (established) return
+
         // body = [echo of our token][responder token][ephemeral][static][confirm]
         if (length != 9 + 4 + 4 + 32 + 32 + 16) {
             if (debug) System.err.println("pinhole: PACK rejected, length " + length)
