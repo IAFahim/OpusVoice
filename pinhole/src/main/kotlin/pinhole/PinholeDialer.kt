@@ -139,7 +139,11 @@ class PinholeDialer(
                 return // socket closed
             }
             if (packet.length == 0) continue
-            handleFrame(buffer, packet.length, packet.socketAddress as? InetSocketAddress ?: continue)
+            val from = packet.socketAddress as? InetSocketAddress ?: continue
+            if (debug && !established) {
+                System.err.println("pinhole: received frame type=" + (buffer[0].toInt() and 0xFF) + " len=" + packet.length + " from " + from)
+            }
+            handleFrame(buffer, packet.length, from)
         }
     }
 
@@ -169,8 +173,14 @@ class PinholeDialer(
 
     private fun handlePack(frame: ByteArray, length: Int, from: InetSocketAddress) {
         // body = [echo of our token][responder token][ephemeral][static][confirm]
-        if (length != 9 + 4 + 4 + 32 + 32 + 16) return
-        if (readIntLe(frame, 9) != myToken) return // not an echo of our handshake
+        if (length != 9 + 4 + 4 + 32 + 32 + 16) {
+            if (debug) System.err.println("pinhole: PACK rejected, length " + length)
+            return
+        }
+        if (readIntLe(frame, 9) != myToken) {
+            if (debug) System.err.println("pinhole: PACK rejected, token mismatch")
+            return
+        }
 
         val pinned = cs.staticKey ?: return
         val peerEph = frame.copyOfRange(17, 17 + 32)
@@ -180,6 +190,7 @@ class PinholeDialer(
         // The answering key must be the key the string vouches for: a machine in the
         // middle, or a stale string — either way the session is dead on arrival.
         if (!peerStatic.contentEquals(pinned)) {
+            if (debug) System.err.println("pinhole: PACK rejected, static key mismatch")
             fail("peer static key does not match its connection string (possible man in the middle)")
             return
         }
@@ -192,6 +203,7 @@ class PinholeDialer(
 
         val expected = if (myPeerId < cs.peerId) keys.hiConfirm else keys.loConfirm
         if (!peerConfirm.contentEquals(expected)) {
+            if (debug) System.err.println("pinhole: PACK rejected, confirm mismatch")
             fail("handshake confirmation failed: the answering peer does not hold the advertised key")
             return
         }
@@ -283,6 +295,9 @@ class PinholeDialer(
         socket.close()
         onClosed?.invoke(reason)
     }
+
+    /** Verbose pre-establishment logging for diagnostics. */
+    var debug: Boolean = true
 
     private companion object {
         const val PREFIX = 13 // type(1) + sender peer id(8, LE) + token(4, LE)
