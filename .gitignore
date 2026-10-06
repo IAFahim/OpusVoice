@@ -19,3 +19,5 @@ debug.keystore
 *.jks
 signing-credentials.txt
 pinhole/build/
+interop/EchoPeer/bin/
+interop/EchoPeer/obj/
