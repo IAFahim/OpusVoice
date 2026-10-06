@@ -1,0 +1,10 @@
+# Manual startup profile: pre-compile the hot path for app start and the
+# streaming pipeline. Generated rules from a Macrobenchmark module
+# (device-measured) can replace this file later.
+HSPLcom/example/MainActivity;->**(**)**
+HSPLcom/example/audio/**->**(**)**
+HSPLcom/example/webrtc/**->**(**)**
+HSPLcom/example/ui/**->**(**)**
+HSPLandroidx/compose/runtime/**->**(**)**
+HSPLandroidx/compose/ui/**->**(**)**
+HSPLandroidx/compose/material3/**->**(**)**

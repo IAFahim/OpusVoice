@@ -34,3 +34,10 @@ git push origin v1.0.0   # release job runs and attaches artifacts
 ```
 
 Signing uses the repo secrets `KEYSTORE_BASE64`, `STORE_PASSWORD`, and `KEY_PASSWORD`. The key/credentials live locally in `my-upload-key.jks` / `signing-credentials.txt` (git-ignored) — back them up, they are required to ship updates under the same identity.
+
+## Stack notes
+
+- **Security:** `GEMINI_API_KEY` is *not* embedded in release artifacts (it stays commented out in `.env.example`). If you ever enable it, treat anything packaged into an APK as public — prefer fetching keys at runtime from your own backend.
+- **R8 + resource shrinking** are enabled on release builds, and CI runs a signed `assembleRelease` on every push so minification breakage surfaces immediately.
+- **Baseline profile:** `app/src/main/baseline-prof.txt` pre-compiles the startup/streaming hot path via `androidx.profileinstaller`. Replacing the hand-written rules with device-measured ones from a Macrobenchmark module is future work.
+- **No DI / navigation framework (deliberate):** single-screen app; Hilt and Navigation 3 become worthwhile with a second screen or injected repositories.
