@@ -143,7 +143,7 @@ class OpusCodec(
             try {
                 val inputIndex = activeEncoder.dequeueInputBuffer(TIMEOUT_US)
                 if (inputIndex >= 0) {
-                    val inputBuffer = activeEncoder.getInputBuffer(index = inputIndex)
+                    val inputBuffer = activeEncoder.getInputBuffer(inputIndex)
                     if (inputBuffer != null) {
                         inputBuffer.clear()
                         val byteBuf = ByteBuffer.allocate(length * 2).order(ByteOrder.LITTLE_ENDIAN)
