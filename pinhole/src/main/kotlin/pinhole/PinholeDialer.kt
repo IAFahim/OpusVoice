@@ -143,7 +143,15 @@ class PinholeDialer(
             if (debug && !established) {
                 System.err.println("pinhole: received frame type=" + (buffer[0].toInt() and 0xFF) + " len=" + packet.length + " from " + from)
             }
-            handleFrame(buffer, packet.length, from)
+            try {
+                handleFrame(buffer, packet.length, from)
+            } catch (e: Exception) {
+                // A dead receive thread looks like an unreachable peer; surface the cause.
+                System.err.println("pinhole: receive handler crashed: " + e)
+                e.printStackTrace()
+                fail("receive handler crashed: " + e)
+                return
+            }
         }
     }
 
