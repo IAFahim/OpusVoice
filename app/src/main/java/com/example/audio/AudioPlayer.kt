@@ -21,7 +21,9 @@ import kotlin.math.sqrt
  */
 class AudioPlayer(
     private val jitterBuffer: JitterBuffer,
-    private val codec: OpusCodec,
+    // Mutable so the ViewModel can swap in a reconfigured codec (e.g. after a
+    // bitrate change); the playout loop reads it fresh on every packet.
+    var codec: OpusCodec,
     private val onPlayoutLevelUpdate: (db: Float, isPlaying: Boolean) -> Unit
 ) {
     companion object {

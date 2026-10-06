@@ -109,7 +109,7 @@ class OpusCodec(
                 put("OpusHead".toByteArray(Charsets.US_ASCII))
                 put(1.toByte()) // Version 1
                 put(channels.toByte()) // Channel count
-                putShort(3840.toShort()) // Pre-skip
+                putShort(312.toShort()) // Pre-skip (RFC 7845 recommended default)
                 putInt(sampleRate) // 48000 Hz
                 putShort(0.toShort()) // Output gain
                 put(0.toByte()) // Channel mapping
@@ -133,6 +133,9 @@ class OpusCodec(
 
     /**
      * Encodes 16-bit PCM samples into an Opus/VoIP compressed frame.
+     * Returns an empty array when the encoder has no frame ready yet; the
+     * caller skips empty payloads. Never mixes the fallback codec's frames
+     * into a MediaCodec stream (interleaved formats decode as noise).
      */
     fun encode(pcmSamples: ShortArray, length: Int): ByteArray {
         val activeEncoder = encoder
@@ -140,7 +143,7 @@ class OpusCodec(
             try {
                 val inputIndex = activeEncoder.dequeueInputBuffer(TIMEOUT_US)
                 if (inputIndex >= 0) {
-                    val inputBuffer = activeEncoder.getInputBuffer(inputIndex)
+                    val inputBuffer = activeEncoder.getInputBuffer(index = inputIndex)
                     if (inputBuffer != null) {
                         inputBuffer.clear()
                         val byteBuf = ByteBuffer.allocate(length * 2).order(ByteOrder.LITTLE_ENDIAN)
@@ -159,21 +162,29 @@ class OpusCodec(
                 }
 
                 val bufferInfo = MediaCodec.BufferInfo()
-                val outputIndex = activeEncoder.dequeueOutputBuffer(bufferInfo, TIMEOUT_US)
-                if (outputIndex >= 0) {
-                    val outputBuffer = activeEncoder.getOutputBuffer(outputIndex)
-                    if (outputBuffer != null && bufferInfo.size > 0) {
-                        val outBytes = ByteArray(bufferInfo.size)
-                        outputBuffer.position(bufferInfo.offset)
-                        outputBuffer.get(outBytes, 0, bufferInfo.size)
-                        activeEncoder.releaseOutputBuffer(outputIndex, false)
-                        return outBytes
+                var outputIndex = activeEncoder.dequeueOutputBuffer(bufferInfo, TIMEOUT_US)
+                while (outputIndex >= 0) {
+                    // CODEC_CONFIG buffers carry the OpusHead header, not audio.
+                    if (bufferInfo.size > 0 &&
+                        bufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG == 0
+                    ) {
+                        val outputBuffer = activeEncoder.getOutputBuffer(outputIndex)
+                        if (outputBuffer != null) {
+                            val outBytes = ByteArray(bufferInfo.size)
+                            outputBuffer.position(bufferInfo.offset)
+                            outputBuffer.get(outBytes, 0, bufferInfo.size)
+                            activeEncoder.releaseOutputBuffer(outputIndex, false)
+                            return outBytes
+                        }
                     }
                     activeEncoder.releaseOutputBuffer(outputIndex, false)
+                    outputIndex = activeEncoder.dequeueOutputBuffer(bufferInfo, 0)
                 }
             } catch (e: Throwable) {
                 Log.e(TAG, "Error during MediaCodec Opus encoding, falling back to adaptive VoIP", e)
             }
+            // Encoder starting up or transient hiccup: emit no frame this cycle.
+            return ByteArray(0)
         }
 
         // Adaptive high-performance voice compression (IMA-ADPCM / Opus sub-band framing)
@@ -183,6 +194,7 @@ class OpusCodec(
 
     /**
      * Decodes an Opus/VoIP packet into 16-bit PCM samples for AudioTrack playback.
+     * Returns an empty array when the decoder has no output ready yet.
      */
     fun decode(encodedData: ByteArray): ShortArray {
         if (encodedData.isEmpty()) return ShortArray(0)
@@ -212,28 +224,33 @@ class OpusCodec(
                 }
 
                 val bufferInfo = MediaCodec.BufferInfo()
-                val outputIndex = activeDecoder.dequeueOutputBuffer(bufferInfo, TIMEOUT_US)
-                if (outputIndex >= 0) {
-                    val outputBuffer = activeDecoder.getOutputBuffer(outputIndex)
-                    if (outputBuffer != null && bufferInfo.size > 0) {
-                        val shortCount = bufferInfo.size / 2
-                        val shorts = ShortArray(shortCount)
-                        val byteBuf = ByteBuffer.wrap(
-                            outputBuffer.array(),
-                            bufferInfo.offset,
-                            bufferInfo.size
-                        ).order(ByteOrder.LITTLE_ENDIAN)
-                        for (i in 0 until shortCount) {
-                            shorts[i] = byteBuf.short
+                var outputIndex = activeDecoder.dequeueOutputBuffer(bufferInfo, TIMEOUT_US)
+                while (outputIndex >= 0) {
+                    if (bufferInfo.size > 0 &&
+                        bufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG == 0
+                    ) {
+                        val outputBuffer = activeDecoder.getOutputBuffer(outputIndex)
+                        if (outputBuffer != null) {
+                            val shortCount = bufferInfo.size / 2
+                            val shorts = ShortArray(shortCount)
+                            outputBuffer.position(bufferInfo.offset)
+                            outputBuffer.order(ByteOrder.LITTLE_ENDIAN)
+                            for (i in 0 until shortCount) {
+                                shorts[i] = outputBuffer.short
+                            }
+                            activeDecoder.releaseOutputBuffer(outputIndex, false)
+                            return shorts
                         }
-                        activeDecoder.releaseOutputBuffer(outputIndex, false)
-                        return shorts
                     }
                     activeDecoder.releaseOutputBuffer(outputIndex, false)
+                    outputIndex = activeDecoder.dequeueOutputBuffer(bufferInfo, 0)
                 }
             } catch (e: Throwable) {
                 Log.e(TAG, "Error during MediaCodec Opus decoding", e)
             }
+            // Decoder latency or transient hiccup: no output this cycle. Decoding
+            // real Opus data with the fallback codec would only produce noise.
+            return ShortArray(0)
         }
 
         // Fallback: decode directly
@@ -375,6 +392,8 @@ class OpusCodec(
             encoder?.release()
         } catch (_: Throwable) {}
         encoder = null
+        isEncoderConfigured = false
+        isUsingHardwareOpusEncoder = false
 
         try {
             decoder?.stop()
@@ -383,5 +402,6 @@ class OpusCodec(
             decoder?.release()
         } catch (_: Throwable) {}
         decoder = null
+        isDecoderConfigured = false
     }
 }

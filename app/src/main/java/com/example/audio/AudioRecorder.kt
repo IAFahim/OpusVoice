@@ -25,7 +25,9 @@ enum class TransmissionMode {
  */
 class AudioRecorder(
     private val dspManager: AudioDspManager,
-    private val codec: OpusCodec,
+    // Mutable so the ViewModel can swap in a reconfigured codec (e.g. after a
+    // bitrate change); the capture loop reads it fresh on every frame.
+    var codec: OpusCodec,
     private val onRtpPacketReady: (RtpPacket) -> Unit,
     private val onAudioLevelUpdate: (db: Float, peak: Float, isTransmitting: Boolean) -> Unit
 ) {

@@ -318,9 +318,12 @@ class OpusVoiceViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun setBitrate(bitrate: Int) {
         _uiState.update { it.copy(bitrate = bitrate) }
-        // Recreate codec with new bitrate
+        // Recreate codec with new bitrate and re-wire the pipeline; recorder
+        // and player hold their own codec reference and must be updated too.
         opusCodec.release()
         opusCodec = OpusCodec(bitrate = bitrate)
+        audioRecorder.codec = opusCodec
+        audioPlayer.codec = opusCodec
         _uiState.update { it.copy(isHardwareOpusEncoder = opusCodec.isUsingHardwareOpusEncoder) }
     }
 
