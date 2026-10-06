@@ -1,0 +1,49 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:views="using:OpusVoice.Qr.Views"
+             x:Class="OpusVoice.Qr.Views.HistoryView">
+
+    <Grid RowDefinitions="Auto,*,Auto" RowSpacing="12" Margin="0,8,0,0">
+        <Grid Grid.Row="0" ColumnDefinitions="Auto,Auto,*" ColumnSpacing="12">
+            <TextBlock Grid.Column="0" Text="Scan history" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center" />
+            <TextBlock Grid.Column="1" x:Name="CountText" Foreground="{DynamicResource OpusTextTertiaryBrush}" VerticalAlignment="Center" />
+            <Button Grid.Column="2" x:Name="ClearButton" Content="Clear all" HorizontalAlignment="Right"
+                    Click="OnClearClicked" />
+        </Grid>
+
+        <Border Grid.Row="1" Background="{DynamicResource OpusSurfaceBrush}" CornerRadius="12" Padding="6" MinHeight="220">
+            <ListBox x:Name="HistoryList" SelectionChanged="OnSelectionChanged">
+                <ListBox.ItemTemplate>
+                    <DataTemplate x:DataType="views:HistoryRow">
+                        <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="12" Margin="6,4">
+                            <Border Grid.Column="0" Background="{Binding KindBrush}" CornerRadius="999"
+                                    Padding="10,2" VerticalAlignment="Center">
+                                <TextBlock Text="{Binding KindLabel}" FontSize="11" FontWeight="SemiBold"
+                                           Foreground="#FFFFFFFF" />
+                            </Border>
+                            <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                <TextBlock Text="{Binding Preview}" TextTrimming="CharacterEllipsis" />
+                                <TextBlock Text="{Binding When}" FontSize="11"
+                                           Foreground="{DynamicResource OpusTextTertiaryBrush}" />
+                            </StackPanel>
+                            <TextBlock Grid.Column="2" Text="{Binding LengthLabel}" FontSize="11"
+                                       Foreground="{DynamicResource OpusTextTertiaryBrush}" VerticalAlignment="Center" />
+                        </Grid>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+        </Border>
+
+        <Border Grid.Row="2" Background="{DynamicResource OpusSurfaceBrush}" CornerRadius="12" Padding="18">
+            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                <ScrollViewer MaxHeight="170">
+                    <TextBlock x:Name="DetailText" TextWrapping="Wrap" FontFamily="monospace" LineHeight="21"
+                               Text="Select a scan to see its routed details again."
+                               Foreground="{DynamicResource OpusTextSecondaryBrush}" />
+                </ScrollViewer>
+                <Button Grid.Column="1" x:Name="CopyEntryButton" Content="Copy" IsEnabled="False"
+                        Click="OnCopyClicked" VerticalAlignment="Top" />
+            </Grid>
+        </Border>
+    </Grid>
+</UserControl>

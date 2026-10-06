@@ -1,0 +1,95 @@
+<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="OpusVoice.Qr.App"
+             RequestedThemeVariant="Dark">
+
+    <Application.Resources>
+        <!-- The Android app's dark palette, mirrored exactly. -->
+        <Color x:Key="SystemAccentColor">#10B981</Color>
+        <Color x:Key="OpusBackgroundColor">#0F111A</Color>
+        <Color x:Key="OpusSurfaceColor">#161926</Color>
+        <Color x:Key="OpusSurfaceVariantColor">#202538</Color>
+        <Color x:Key="OpusHighlightColor">#2C324B</Color>
+        <Color x:Key="OpusAccentColor">#10B981</Color>
+        <Color x:Key="OpusAccentAltColor">#5865F2</Color>
+        <Color x:Key="OpusTextPrimaryColor">#F1F5F9</Color>
+        <Color x:Key="OpusTextSecondaryColor">#94A3B8</Color>
+        <Color x:Key="OpusTextTertiaryColor">#64748B</Color>
+        <Color x:Key="OpusErrorColor">#EF4444</Color>
+        <Color x:Key="OpusWarningColor">#F59E0B</Color>
+
+        <SolidColorBrush x:Key="OpusBackgroundBrush" Color="{StaticResource OpusBackgroundColor}" />
+        <SolidColorBrush x:Key="OpusSurfaceBrush" Color="{StaticResource OpusSurfaceColor}" />
+        <SolidColorBrush x:Key="OpusSurfaceVariantBrush" Color="{StaticResource OpusSurfaceVariantColor}" />
+        <SolidColorBrush x:Key="OpusHighlightBrush" Color="{StaticResource OpusHighlightColor}" />
+        <SolidColorBrush x:Key="OpusAccentBrush" Color="{StaticResource OpusAccentColor}" />
+        <SolidColorBrush x:Key="OpusAccentAltBrush" Color="{StaticResource OpusAccentAltColor}" />
+        <SolidColorBrush x:Key="OpusTextPrimaryBrush" Color="{StaticResource OpusTextPrimaryColor}" />
+        <SolidColorBrush x:Key="OpusTextSecondaryBrush" Color="{StaticResource OpusTextSecondaryColor}" />
+        <SolidColorBrush x:Key="OpusTextTertiaryBrush" Color="{StaticResource OpusTextTertiaryColor}" />
+        <SolidColorBrush x:Key="OpusErrorBrush" Color="{StaticResource OpusErrorColor}" />
+        <SolidColorBrush x:Key="OpusWarningBrush" Color="{StaticResource OpusWarningColor}" />
+    </Application.Resources>
+
+    <Application.Styles>
+        <FluentTheme />
+        <Style Selector="Window">
+            <Setter Property="Background" Value="{DynamicResource OpusBackgroundBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource OpusTextPrimaryBrush}" />
+        </Style>
+        <Style Selector="TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource OpusTextPrimaryBrush}" />
+        </Style>
+        <Style Selector="TextBox">
+            <Setter Property="Background" Value="{DynamicResource OpusSurfaceVariantBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource OpusTextPrimaryBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource OpusHighlightBrush}" />
+            <Setter Property="CaretBrush" Value="{DynamicResource OpusAccentBrush}" />
+            <Setter Property="CornerRadius" Value="8" />
+            <Setter Property="Padding" Value="10,8" />
+        </Style>
+        <Style Selector="TextBox:focus">
+            <Setter Property="BorderBrush" Value="{DynamicResource OpusAccentBrush}" />
+        </Style>
+        <Style Selector="Button">
+            <Setter Property="Background" Value="{DynamicResource OpusHighlightBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource OpusTextPrimaryBrush}" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="CornerRadius" Value="8" />
+            <Setter Property="Padding" Value="16,9" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+        </Style>
+        <Style Selector="Button.accent">
+            <Setter Property="Background" Value="{DynamicResource OpusAccentBrush}" />
+            <Setter Property="Foreground" Value="#FFFFFFFF" />
+        </Style>
+        <Style Selector="Button.blurple">
+            <Setter Property="Background" Value="{DynamicResource OpusAccentAltBrush}" />
+            <Setter Property="Foreground" Value="#FFFFFFFF" />
+        </Style>
+        <Style Selector="Button:disabled">
+            <Setter Property="Opacity" Value="0.45" />
+        </Style>
+        <Style Selector="TabItem">
+            <Setter Property="FontSize" Value="15" />
+            <Setter Property="Padding" Value="18,9" />
+        </Style>
+        <Style Selector="ListBox">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+        </Style>
+        <Style Selector="ListBoxItem">
+            <Setter Property="CornerRadius" Value="8" />
+            <Setter Property="Padding" Value="8,6" />
+        </Style>
+        <Style Selector="ListBoxItem:selected">
+            <Setter Property="Background" Value="{DynamicResource OpusHighlightBrush}" />
+        </Style>
+        <Style Selector="CheckBox /template/ ContentPresenter#ContentPresenter, RadioButton /template/ ContentPresenter#ContentPresenter">
+            <Setter Property="Foreground" Value="{DynamicResource OpusTextPrimaryBrush}" />
+        </Style>
+        <Style Selector="ComboBox, ComboBoxItem">
+            <Setter Property="Foreground" Value="{DynamicResource OpusTextPrimaryBrush}" />
+        </Style>
+    </Application.Styles>
+</Application>

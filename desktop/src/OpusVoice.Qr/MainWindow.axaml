@@ -1,0 +1,32 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:views="using:OpusVoice.Qr.Views"
+        x:Class="OpusVoice.Qr.MainWindow"
+        Title="OpusVoice QR"
+        Width="1100" Height="760"
+        MinWidth="1020" MinHeight="680">
+
+    <Grid RowDefinitions="Auto,*" Margin="22,16,22,18">
+        <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="12" Margin="0,0,0,14">
+            <Border Width="30" Height="30" CornerRadius="9" Background="{DynamicResource OpusAccentBrush}" />
+            <TextBlock Text="OpusVoice QR" FontSize="21" FontWeight="SemiBold" VerticalAlignment="Center" />
+            <TextBlock Text="scan · generate · voice · history" Foreground="{DynamicResource OpusTextTertiaryBrush}"
+                       VerticalAlignment="Center" Margin="2,3,0,0" />
+        </StackPanel>
+
+        <TabControl Grid.Row="1" x:Name="Tabs" SelectionChanged="OnTabSelectionChanged">
+            <TabItem Header="Scan">
+                <views:ScanView x:Name="ScanView" />
+            </TabItem>
+            <TabItem Header="Generate">
+                <views:GenerateView />
+            </TabItem>
+            <TabItem Header="Voice" x:Name="VoiceTab">
+                <views:VoiceView x:Name="VoiceView" />
+            </TabItem>
+            <TabItem Header="History" x:Name="HistoryTab">
+                <views:HistoryView x:Name="HistoryView" />
+            </TabItem>
+        </TabControl>
+    </Grid>
+</Window>

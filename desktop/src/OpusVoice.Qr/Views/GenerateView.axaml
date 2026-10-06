@@ -1,0 +1,50 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="OpusVoice.Qr.Views.GenerateView">
+
+    <Grid ColumnDefinitions="5*,4*,5*" ColumnSpacing="18" Margin="0,8,0,0">
+        <!-- Left: text editor -->
+        <Grid Grid.Column="0" RowDefinitions="Auto,*,Auto,Auto" RowSpacing="12">
+            <TextBlock Grid.Row="0" Text="Text to encode" FontSize="16" FontWeight="SemiBold" />
+            <TextBox Grid.Row="1" x:Name="InputBox" AcceptsReturn="True" TextWrapping="Wrap"
+                     VerticalContentAlignment="Top" MinHeight="220"
+                     Watermark="Anything: a pinhole ticket, a udp:// target, or free text" />
+            <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="10">
+                <Button Classes="accent" Content="Copy text" Click="OnCopyClicked" />
+                <Button Content="Save PNG" Click="OnSaveClicked" />
+            </StackPanel>
+            <TextBlock Grid.Row="3" x:Name="GenerateStatus" TextWrapping="Wrap"
+                       Foreground="{DynamicResource OpusTextTertiaryBrush}"
+                       Text="Type something to render a QR code." />
+        </Grid>
+
+        <!-- Middle: live QR preview -->
+        <Border Grid.Column="1" Background="{DynamicResource OpusSurfaceBrush}" CornerRadius="12"
+                Padding="18" VerticalAlignment="Top">
+            <StackPanel Spacing="12">
+                <Border Background="#FFFFFFFF" CornerRadius="8" Padding="10" HorizontalAlignment="Center">
+                    <Image x:Name="QrImage" Width="240" Height="240" Stretch="Uniform" />
+                </Border>
+                <TextBlock Text="ECC level L · the QR version follows the input length"
+                           Foreground="{DynamicResource OpusTextTertiaryBrush}"
+                           TextAlignment="Center" TextWrapping="Wrap" />
+            </StackPanel>
+        </Border>
+
+        <!-- Right: structured payload details -->
+        <Border Grid.Column="2" Background="{DynamicResource OpusSurfaceBrush}" CornerRadius="12" Padding="18">
+            <Grid RowDefinitions="Auto,Auto,*" RowSpacing="12">
+                <TextBlock Grid.Row="0" Text="Payload details" FontSize="16" FontWeight="SemiBold" />
+                <Border Grid.Row="1" x:Name="KindBadge" Background="{DynamicResource OpusHighlightBrush}"
+                        CornerRadius="999" Padding="12,4" HorizontalAlignment="Left" IsVisible="False">
+                    <TextBlock x:Name="KindBadgeText" FontSize="12" FontWeight="SemiBold" Foreground="#FFFFFFFF" />
+                </Border>
+                <ScrollViewer Grid.Row="2">
+                    <TextBlock x:Name="DetailText" TextWrapping="Wrap" FontFamily="monospace" LineHeight="21"
+                               Text="Details appear here when the text parses as a pinhole ticket or a udp:// endpoint."
+                               Foreground="{DynamicResource OpusTextSecondaryBrush}" />
+                </ScrollViewer>
+            </Grid>
+        </Border>
+    </Grid>
+</UserControl>

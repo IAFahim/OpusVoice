@@ -1,0 +1,64 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="OpusVoice.Qr.Views.VoiceView">
+
+    <Grid ColumnDefinitions="6*,5*" ColumnSpacing="18" Margin="0,8,0,0">
+        <!-- Left: controls -->
+        <Grid Grid.Column="0" RowDefinitions="Auto,Auto,Auto,Auto,Auto,*,Auto" RowSpacing="14">
+            <TextBlock Grid.Row="0" Text="Voice over UDP · Opus 48 kHz mono" FontSize="16" FontWeight="SemiBold" />
+
+            <StackPanel Grid.Row="1" Spacing="6">
+                <TextBlock Text="Target (fill from a scanned udp:// QR on the Scan tab)" FontSize="12"
+                           Foreground="{DynamicResource OpusTextSecondaryBrush}" />
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
+                    <TextBox Grid.Column="0" x:Name="HostBox" Watermark="host or [ipv6]" />
+                    <TextBox Grid.Column="1" x:Name="PortBox" Width="110" Watermark="port" />
+                </Grid>
+            </StackPanel>
+
+            <StackPanel Grid.Row="2" Spacing="6">
+                <TextBlock Text="Source" FontSize="12" Foreground="{DynamicResource OpusTextSecondaryBrush}" />
+                <StackPanel Orientation="Horizontal" Spacing="18">
+                    <RadioButton x:Name="ToneRadio" GroupName="voiceSource" IsChecked="True"
+                                 Content="Test tone (440 Hz)" />
+                    <RadioButton x:Name="MicRadio" GroupName="voiceSource" Content="Microphone" />
+                </StackPanel>
+            </StackPanel>
+
+            <StackPanel Grid.Row="3" Spacing="6">
+                <TextBlock Text="Bitrate" FontSize="12" Foreground="{DynamicResource OpusTextSecondaryBrush}" />
+                <ComboBox x:Name="BitrateBox" Width="180" HorizontalAlignment="Left" SelectedIndex="2">
+                    <ComboBoxItem Content="16 kbps" />
+                    <ComboBoxItem Content="32 kbps" />
+                    <ComboBoxItem Content="64 kbps" />
+                    <ComboBoxItem Content="96 kbps" />
+                    <ComboBoxItem Content="128 kbps" />
+                </ComboBox>
+            </StackPanel>
+
+            <CheckBox Grid.Row="4" x:Name="LoopbackCheck" Content="Loopback monitor — decode and play back locally"
+                      IsChecked="False" />
+
+            <StackPanel Grid.Row="5" Orientation="Horizontal" Spacing="10" VerticalAlignment="Top">
+                <Button x:Name="StartButton" Classes="blurple" Content="Start streaming" Click="OnStartClicked" />
+                <Button x:Name="StopButton" Content="Stop" IsEnabled="False" Click="OnStopClicked" />
+            </StackPanel>
+
+            <TextBlock Grid.Row="6" x:Name="VoiceStatus" TextWrapping="Wrap" MinHeight="48"
+                       Foreground="{DynamicResource OpusTextSecondaryBrush}"
+                       Text="Pick a source and a target, then start. The test tone needs no microphone — it proves the whole pipeline (PCM → Opus → RTP → UDP) on headless machines." />
+        </Grid>
+
+        <!-- Right: stats -->
+        <Border Grid.Column="1" Background="{DynamicResource OpusSurfaceBrush}" CornerRadius="12" Padding="18">
+            <Grid RowDefinitions="Auto,*" RowSpacing="12">
+                <TextBlock Grid.Row="0" Text="Stream stats" FontSize="16" FontWeight="SemiBold" />
+                <ScrollViewer Grid.Row="1">
+                    <TextBlock x:Name="StatsText" FontFamily="monospace" LineHeight="22" TextWrapping="Wrap"
+                               Foreground="{DynamicResource OpusTextSecondaryBrush}"
+                               Text="idle" />
+                </ScrollViewer>
+            </Grid>
+        </Border>
+    </Grid>
+</UserControl>

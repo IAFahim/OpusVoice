@@ -1,0 +1,60 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="OpusVoice.Qr.Views.ScanView">
+
+    <Grid ColumnDefinitions="7*,6*" ColumnSpacing="18" Margin="0,8,0,0">
+        <!-- Left: camera + paste-instead path -->
+        <Grid Grid.Column="0" RowDefinitions="*,Auto,Auto,Auto,Auto" RowSpacing="12">
+            <Border Grid.Row="0" Background="{DynamicResource OpusSurfaceBrush}" CornerRadius="12"
+                    ClipToBounds="True" MinHeight="300" MaxHeight="430">
+                <Grid>
+                    <Image x:Name="CameraImage" Stretch="Uniform" Margin="8" />
+                    <Border x:Name="CameraOverlay" Background="#A6000000" CornerRadius="8"
+                            Padding="16,10" HorizontalAlignment="Center" VerticalAlignment="Center"
+                            MaxWidth="420">
+                        <TextBlock x:Name="CameraStatus" TextWrapping="Wrap"
+                                   Text="Camera idle — start scanning, or paste a payload below."
+                                   Foreground="{DynamicResource OpusTextSecondaryBrush}" />
+                    </Border>
+                </Grid>
+            </Border>
+
+            <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="10">
+                <Button x:Name="StartButton" Classes="accent" Content="Start scanning" Click="OnStartClicked" />
+                <Button x:Name="StopButton" Content="Stop" IsEnabled="False" Click="OnStopClicked" />
+            </StackPanel>
+
+            <TextBlock Grid.Row="2" Text="— or paste instead —" HorizontalAlignment="Center"
+                       Foreground="{DynamicResource OpusTextTertiaryBrush}" />
+
+            <TextBox Grid.Row="3" x:Name="PasteBox" Watermark="pinhole1:… or udp://host:port" />
+
+            <StackPanel Grid.Row="4" Orientation="Horizontal" Spacing="10">
+                <Button x:Name="ParseButton" Classes="accent" Content="Parse pasted text" Click="OnParseClicked" />
+                <TextBlock x:Name="ScanStatus" VerticalAlignment="Center" TextWrapping="Wrap"
+                           Foreground="{DynamicResource OpusTextSecondaryBrush}" />
+            </StackPanel>
+        </Grid>
+
+        <!-- Right: routed result -->
+        <Border Grid.Column="1" Background="{DynamicResource OpusSurfaceBrush}" CornerRadius="12" Padding="18">
+            <Grid RowDefinitions="Auto,Auto,*,Auto" RowSpacing="12">
+                <TextBlock Grid.Row="0" Text="Scanned payload" FontSize="16" FontWeight="SemiBold" />
+                <Border Grid.Row="1" x:Name="KindBadge" Background="{DynamicResource OpusHighlightBrush}"
+                        CornerRadius="999" Padding="12,4" HorizontalAlignment="Left" IsVisible="False">
+                    <TextBlock x:Name="KindBadgeText" FontSize="12" FontWeight="SemiBold" Foreground="#FFFFFFFF" />
+                </Border>
+                <ScrollViewer Grid.Row="2">
+                    <TextBlock x:Name="DetailText" Text="Nothing scanned yet." TextWrapping="Wrap"
+                               FontFamily="monospace" LineHeight="21"
+                               Foreground="{DynamicResource OpusTextSecondaryBrush}" />
+                </ScrollViewer>
+                <StackPanel Grid.Row="3" Orientation="Horizontal" Spacing="10">
+                    <Button x:Name="CopyResultButton" Content="Copy scanned text" IsEnabled="False" Click="OnCopyClicked" />
+                    <Button x:Name="UseAsVoiceTargetButton" Classes="blurple" Content="Use as voice target"
+                            IsVisible="False" Click="OnUseAsVoiceTargetClicked" />
+                </StackPanel>
+            </Grid>
+        </Border>
+    </Grid>
+</UserControl>

@@ -48,6 +48,8 @@ The Android app scans connection-string QR codes straight into its transport fie
 
 The same system runs in the browser at **https://iafahim.github.io/OpusVoice/** (the `web/` app, deployed by `.github/workflows/web.yml`): scan with the camera or paste, get the typed payload — peer ID, NAT hint, candidates, pinned keys — and turn any string into a scannable QR. It's an installable PWA and all scanning happens on-device.
 
+The web console also **streams voice**: mic (or a test tone) → WebCodecs Opus → the same RTP framing the app uses → a WebSocket bridge. Browsers can't send raw UDP, so run the receiver's new `ws` mode (`dotnet run --project src/OpusVoice.Receiver -- ws 8080`) — it prints a `ws://` QR the console recognizes and can stream to directly. Note the browser mixed-content rule: from the https Pages app only `ws://localhost` targets are reachable; serve the console locally (`npm run dev`) for LAN receivers.
+
 ## Pinhole transport (NAT traversal + E2E encryption)
 
 Next to plain UDP, the app can stream its RTP through a [Pinhole](https://github.com/IAFahim/Pinhole.Net) session:
