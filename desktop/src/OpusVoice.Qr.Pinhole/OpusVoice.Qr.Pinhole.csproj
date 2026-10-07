@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <IsPackable>false</IsPackable>
+    <!-- Local checkout of Pinhole.Net as a sibling of the OpusVoice repo root; override with -p:PinholeRoot=/path/to/Pinhole.Net -->
+    <PinholeRoot Condition="'$(PinholeRoot)' == ''">$(MSBuildThisFileDirectory)../../../../Pinhole.Net</PinholeRoot>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="$(PinholeRoot)/src/Pinhole/Pinhole.csproj" />
+    <ProjectReference Include="..\OpusVoice.Qr.Core\OpusVoice.Qr.Core.csproj" />
+  </ItemGroup>
+
+</Project>

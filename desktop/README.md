@@ -13,9 +13,11 @@ desktop/
   OpusVoice.Qr.sln
   src/OpusVoice.Qr.Core/         payload router + connection-string parser + RTP framing (no UI deps)
   src/OpusVoice.Qr.Audio/        pure-C# Opus codec wrapper + test-tone generator (Concentus)
-  src/OpusVoice.Qr/              the Avalonia 11.3 app (Scan / Generate / Voice / History tabs)
+  src/OpusVoice.Qr.Pinhole/      Pinhole.Net-backed voice transport: dial tickets, accept peers
+                                 (needs a sibling Pinhole.Net checkout; override with -p:PinholeRoot=)
+  src/OpusVoice.Qr/              the Avalonia 11.3 app (Scan / Generate / Voice / Device / History tabs)
   tests/OpusVoice.Qr.Core.Tests/ xUnit tests: the six Android parity tests plus parser, RTP,
-                                 tone and codec coverage
+                                 tone, codec and live pinhole transport coverage
 ```
 
 ## Run
@@ -29,8 +31,14 @@ Build and test:
 
 ```bash
 dotnet build -c Release    # zero errors, zero warnings from the app's own code
-dotnet test                # 50 tests, all green
+dotnet test                # 55 tests, all green (three exercise a real Pinhole session)
 ```
+
+The Voice tab's Pinhole transport needs a checkout of
+[Pinhole.Net](https://github.com/IAFahim/Pinhole.Net) as a **sibling of this repo** (the
+project references `../../../../Pinhole.Net` — override with `-p:PinholeRoot=/path/to/Pinhole.Net`),
+exactly like OpusVoice.Receiver. Without it, build the solution minus the Pinhole project;
+UDP streaming and every other tab do not depend on it.
 
 ## Linux prerequisites
 
@@ -65,7 +73,16 @@ or `udp://` endpoint, structured details appear beside the QR: string version, p
 NAT hint, every candidate as `host:port` + kind, and static/endpoint key presence.
 
 ### Voice
-Streams Opus audio over UDP to a host:port:
+Streams Opus audio to a target over either transport:
+
+- **UDP** — plain RTP to `host:port`, as before.
+- **Pinhole / iroh** — paste or scan a `pinhole1:` connection string (from OpusVoice.Receiver,
+  the Android app's listener mode, or any Pinhole.Net node). Start dials it — direct punch
+  first, iroh relay as the standing fallback — then the stats panel shows the live path
+  (`direct <ip:port>` / `relay <host>`), round-trip time from a 2-second ping cadence, and
+  dropped-datagram/rejected-frame counters while the same RTP+Opus bytes stream encrypted.
+  Dial failures surface typed reasons (invalid string, self-connection, no relay fallback,
+  timed out, incompatible peer).
 
 - **Source**: microphone (arecord on Linux, WaveInEvent on Windows) or the built-in 440 Hz
   test tone (pure C#, works headless).
@@ -80,6 +97,21 @@ Streams Opus audio over UDP to a host:port:
 - **Stats**: packets sent, RTP/Opus bytes, elapsed time, current target, error count.
 - The Scan tab's `udp://` result offers **"Use as voice target"**, which fills the Voice tab's
   host/port fields (and switches to it).
+
+#### Pinhole listener (receive side)
+
+With Pinhole selected, a listener panel appears: Start binds a Pinhole node and shows this
+machine's connection string (copy it, or render it as a QR on the Generate tab for the phone
+to scan). When a peer dials and streams, its RTP/Opus frames are decoded and played through
+the default audio output, with path/packet counters in the stats panel — the desktop
+counterpart of the app's loopback monitor, pointed at the network.
+
+### Device (USB control)
+
+For a phone plugged in over USB (developer mode + adb): list devices, install an APK, launch
+or force-stop the OpusVoice app, and stream its logcat filtered to the audio/network/pinhole
+tags — the live evidence stream while the phone streams. Locates adb from `ANDROID_HOME`, the
+default SDK paths, or PATH; the tab degrades to clear guidance when adb is absent.
 
 ### History
 Persisted as JSON at `~/.local/share/OpusVoice.Qr/history.json`
@@ -115,10 +147,6 @@ The Android palette, exactly: background `#0F111A`, surface `#161926`, surface-v
 
 ## Future work
 
-- **Pinhole dialing**: there is currently no "Pinhole" / "Pinhole.Net" package on NuGet
-  (`dotnet package search Pinhole` finds nothing), so scanning a pinhole ticket shows its full
-  parsed details (peer ID, candidates, keys) but cannot dial it. Once a public Pinhole library
-  is published, add a ticket mode to the Voice tab that dials via the parsed candidates and
-  keys.
-- An RTP receiver/sink in this app (a standalone C# sink already consumes the same framing).
 - Camera selection UI (currently device 0) and torch/front/back switching.
+- Disk capture for received streams (the Pinhole listener plays live; OpusVoice.Receiver
+  remains the tool that writes .opus captures).

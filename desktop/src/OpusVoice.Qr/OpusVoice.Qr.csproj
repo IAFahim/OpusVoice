@@ -18,7 +18,13 @@
     <PackageReference Include="Concentus" Version="2.2.2" />
     <PackageReference Include="NAudio" Version="2.2.1" />
     <PackageReference Include="OpenCvSharp4" Version="4.13.0.20260627" />
-    <PackageReference Include="OpenCvSharp4.official.runtime.linux-x64" Version="4.13.0.20260627" />
+    <!-- The native OpenCV runtime is RID-specific; each publish pulls exactly its own copy
+         so every release archive ships a working webcam Scan tab, not just linux-x64.
+         (The official.runtime.* family is linux-only; win/osx ship as runtime.{win,osx.*}.) -->
+    <PackageReference Include="OpenCvSharp4.official.runtime.linux-x64" Version="4.13.0.20260627" Condition="'$(RuntimeIdentifier)' == '' or '$(RuntimeIdentifier)' == 'linux-x64' or '$(RuntimeIdentifier)' == 'linux-arm64'" />
+    <PackageReference Include="OpenCvSharp4.runtime.win" Version="4.13.0.20260627" Condition="'$(RuntimeIdentifier)' == 'win-x64'" />
+    <PackageReference Include="OpenCvSharp4.runtime.osx.x64" Version="4.13.0.20260627" Condition="'$(RuntimeIdentifier)' == 'osx-x64'" />
+    <PackageReference Include="OpenCvSharp4.runtime.osx.arm64" Version="4.13.0.20260627" Condition="'$(RuntimeIdentifier)' == 'osx-arm64'" />
     <PackageReference Include="QRCoder" Version="1.8.0" />
     <PackageReference Include="ZXing.Net" Version="0.16.11" />
   </ItemGroup>
@@ -26,6 +32,7 @@
   <ItemGroup>
     <ProjectReference Include="..\OpusVoice.Qr.Core\OpusVoice.Qr.Core.csproj" />
     <ProjectReference Include="..\OpusVoice.Qr.Audio\OpusVoice.Qr.Audio.csproj" />
+    <ProjectReference Include="..\OpusVoice.Qr.Pinhole\OpusVoice.Qr.Pinhole.csproj" />
   </ItemGroup>
 
 </Project>

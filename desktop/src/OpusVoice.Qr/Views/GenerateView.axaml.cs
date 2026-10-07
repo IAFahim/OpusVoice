@@ -32,6 +32,13 @@ public partial class GenerateView : UserControl
         Regenerate();
     }
 
+    /// <summary>Fills the input from elsewhere in the app (e.g. the Voice tab's "Show QR"
+    /// for its listener connection string) and regenerates immediately.</summary>
+    public void SetInput(string text)
+    {
+        InputBox.Text = text;
+    }
+
     private void OnDebounceTick(object? sender, EventArgs e)
     {
         _debounce.Stop();

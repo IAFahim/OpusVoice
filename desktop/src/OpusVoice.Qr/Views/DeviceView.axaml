@@ -1,0 +1,49 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="OpusVoice.Qr.Views.DeviceView">
+
+    <Grid ColumnDefinitions="6*,5*" ColumnSpacing="18" Margin="0,8,0,0">
+        <!-- Left: devices + control -->
+        <Grid Grid.Column="0" RowDefinitions="Auto,Auto,Auto,*,Auto" RowSpacing="14">
+            <TextBlock Grid.Row="0" Text="USB device control · adb" FontSize="16" FontWeight="SemiBold" />
+
+            <TextBlock Grid.Row="1" x:Name="AdbStatus" TextWrapping="Wrap"
+                       Foreground="{DynamicResource OpusTextSecondaryBrush}"
+                       Text="checking for adb…" />
+
+            <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="10">
+                <Button x:Name="RefreshButton" Content="Refresh devices" Click="OnRefreshClicked" />
+                <Button x:Name="InstallButton" Classes="emerald" Content="Install APK…" Click="OnInstallClicked" IsEnabled="False" />
+                <Button x:Name="LaunchButton" Classes="blurple" Content="Launch app" Click="OnLaunchClicked" IsEnabled="False" />
+                <Button x:Name="ForceStopButton" Content="Force stop" Click="OnForceStopClicked" IsEnabled="False" />
+            </StackPanel>
+
+            <Border Grid.Row="3" Background="{DynamicResource OpusSurfaceBrush}" CornerRadius="12" Padding="12">
+                <ListBox x:Name="DeviceList" SelectionChanged="OnDeviceSelected" />
+            </Border>
+
+            <TextBlock Grid.Row="4" x:Name="ActionResult" TextWrapping="Wrap" MinHeight="40"
+                       Foreground="{DynamicResource OpusTextSecondaryBrush}" Text="" />
+        </Grid>
+
+        <!-- Right: logcat -->
+        <Border Grid.Column="1" Background="{DynamicResource OpusSurfaceBrush}" CornerRadius="12" Padding="18">
+            <Grid RowDefinitions="Auto,Auto,*" RowSpacing="12">
+                <TextBlock Grid.Row="0" Text="Device logcat — audio, RTP and pinhole events" FontSize="16" FontWeight="SemiBold" />
+
+                <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="10">
+                    <Button x:Name="LogStartButton" Classes="emerald" Content="Start capture" Click="OnLogStartClicked" IsEnabled="False" />
+                    <Button x:Name="LogStopButton" Content="Stop" Click="OnLogStopClicked" IsEnabled="False" />
+                    <Button x:Name="LogClearButton" Content="Clear buffer" Click="OnLogClearClicked" IsEnabled="False" />
+                    <CheckBox x:Name="LogAutoScroll" Content="Auto-scroll" IsChecked="True" VerticalAlignment="Center" />
+                </StackPanel>
+
+                <ScrollViewer Grid.Row="2" x:Name="LogScroll">
+                    <TextBlock x:Name="LogText" FontFamily="monospace" LineHeight="19" TextWrapping="NoWrap"
+                               Foreground="{DynamicResource OpusTextSecondaryBrush}"
+                               Text="Pick a device, then start the capture. Shows AudioPlayer, AudioRecorder, AudioDspManager, OpusCodec, UdpTransport and the pinhole module's System.err lines — the evidence stream for streaming, pinhole and iroh checking." />
+                </ScrollViewer>
+            </Grid>
+        </Border>
+    </Grid>
+</UserControl>

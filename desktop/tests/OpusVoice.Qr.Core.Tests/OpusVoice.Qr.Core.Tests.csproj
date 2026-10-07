@@ -21,6 +21,12 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\OpusVoice.Qr.Core\OpusVoice.Qr.Core.csproj" />
     <ProjectReference Include="..\..\src\OpusVoice.Qr.Audio\OpusVoice.Qr.Audio.csproj" />
+    <ProjectReference Include="..\..\src\OpusVoice.Qr.Pinhole\OpusVoice.Qr.Pinhole.csproj" />
   </ItemGroup>
+
+  <PropertyGroup>
+    <!-- Sibling checkout of Pinhole.Net, mirroring OpusVoice.Qr.Pinhole.csproj -->
+    <PinholeRoot Condition="'$(PinholeRoot)' == ''">$(MSBuildThisFileDirectory)../../../../Pinhole.Net</PinholeRoot>
+  </PropertyGroup>
 
 </Project>

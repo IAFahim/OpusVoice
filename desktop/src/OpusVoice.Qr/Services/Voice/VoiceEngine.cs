@@ -1,7 +1,7 @@
 using System.Diagnostics;
-using System.Net.Sockets;
 using OpusVoice.Qr.Audio;
 using OpusVoice.Qr.Core.Rtp;
+using OpusVoice.Qr.Core.Voice;
 
 namespace OpusVoice.Qr.Services.Voice;
 
@@ -11,7 +11,13 @@ internal enum VoiceSourceKind
     Microphone,
 }
 
-internal sealed record VoiceEngineOptions(string Host, int Port, int Bitrate, VoiceSourceKind Source, bool LoopbackMonitor);
+internal sealed record VoiceEngineOptions(
+    string Host,
+    int Port,
+    int Bitrate,
+    VoiceSourceKind Source,
+    bool LoopbackMonitor,
+    IVoiceTransport? Transport = null);
 
 internal sealed record VoiceStats(
     string Target,
@@ -26,8 +32,11 @@ internal sealed record VoiceStats(
 
 /// <summary>
 /// The voice pipeline: PCM frames in (test tone or microphone), Opus encode (48 kHz mono,
-/// 20 ms frames, selectable bitrate), RFC 3550 RTP framing, UDP send. With the loopback monitor
-/// enabled it also decodes its own frames and plays them back when audio output exists.
+/// 20 ms frames, selectable bitrate), RFC 3550 RTP framing, datagram send over the chosen
+/// transport — plain UDP, or an encrypted NAT-traversing Pinhole session supplied by the
+/// caller (whose dialing is too slow for this synchronous Start and belongs to the UI).
+/// With the loopback monitor enabled it also decodes its own frames and plays them back
+/// when audio output exists.
 /// </summary>
 internal sealed class VoiceEngine : IDisposable
 {
@@ -39,7 +48,7 @@ internal sealed class VoiceEngine : IDisposable
 
     private IAudioSource? _source;
     private IAudioSink? _monitorSink;
-    private UdpClient? _udp;
+    private IVoiceTransport? _transport;
     private RtpPacketizer? _packetizer;
     private string _target = string.Empty;
     private long _packetsSent;
@@ -62,6 +71,12 @@ internal sealed class VoiceEngine : IDisposable
 
     public bool IsRunning => Volatile.Read(ref _running) == 1;
 
+    /// <summary>The transport this session sends through, for stats polling (e.g. Pinhole path/RTT).</summary>
+    public IVoiceTransport? Transport
+    {
+        get { lock (_gate) { return _transport; } }
+    }
+
     public void Start(VoiceEngineOptions options)
     {
         if (Interlocked.CompareExchange(ref _running, 1, 0) != 0) return;
@@ -69,9 +84,18 @@ internal sealed class VoiceEngine : IDisposable
         {
             _codec.Bitrate = options.Bitrate;
             _packetizer = new RtpPacketizer(RtpPacketizer.RandomSsrc());
-            _udp = new UdpClient();
-            _udp.Connect(options.Host, options.Port); // resolves once; sends afterwards are connectionless-fast
-            _target = $"{options.Host}:{options.Port}";
+            if (options.Transport is { } external)
+            {
+                // A pre-connected transport (Pinhole): it reports its own state; forward it.
+                _transport = external;
+                _target = external.Target;
+                external.StatusChanged += OnTransportStatus;
+            }
+            else
+            {
+                _transport = new UdpVoiceTransport(options.Host, options.Port);
+                _target = $"{options.Host}:{options.Port}";
+            }
             _loopbackWanted = options.LoopbackMonitor;
 
             _source = options.Source switch
@@ -102,18 +126,20 @@ internal sealed class VoiceEngine : IDisposable
         }
     }
 
+    private void OnTransportStatus(string message) => StatusChanged?.Invoke(message);
+
     private void OnFrame(short[] pcm)
     {
         if (Volatile.Read(ref _running) != 1) return;
-        UdpClient? udp;
+        IVoiceTransport? transport;
         RtpPacketizer? packetizer;
         lock (_gate)
         {
-            udp = _udp;
+            transport = _transport;
             packetizer = _packetizer;
         }
 
-        if (udp is null || packetizer is null) return;
+        if (transport is null || packetizer is null) return;
         try
         {
             var encoded = new byte[OpusStreamCodec.MaxFrameBytes];
@@ -121,7 +147,7 @@ internal sealed class VoiceEngine : IDisposable
             if (length <= 0) return;
 
             byte[] packet = packetizer.NextPacket(encoded.AsSpan(0, length));
-            udp.Send(packet, packet.Length);
+            transport.Send(packet);
 
             Interlocked.Increment(ref _packetsSent);
             Interlocked.Add(ref _bytesSent, packet.Length);
@@ -187,8 +213,12 @@ internal sealed class VoiceEngine : IDisposable
         {
             TryDispose(_source);
             _source = null;
-            TryDispose(_udp);
-            _udp = null;
+            if (_transport is { } transport)
+            {
+                transport.StatusChanged -= OnTransportStatus;
+                TryDispose(transport);
+            }
+            _transport = null;
             TryDispose(_monitorSink);
             _monitorSink = null;
         }

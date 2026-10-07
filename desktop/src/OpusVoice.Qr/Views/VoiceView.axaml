@@ -4,16 +4,29 @@
 
     <Grid ColumnDefinitions="6*,5*" ColumnSpacing="18" Margin="0,8,0,0">
         <!-- Left: controls -->
-        <Grid Grid.Column="0" RowDefinitions="Auto,Auto,Auto,Auto,Auto,*,Auto" RowSpacing="14">
-            <TextBlock Grid.Row="0" Text="Voice over UDP · Opus 48 kHz mono" FontSize="16" FontWeight="SemiBold" />
+        <Grid Grid.Column="0" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,*,Auto" RowSpacing="14">
+            <TextBlock Grid.Row="0" Text="Voice · Opus 48 kHz mono" FontSize="16" FontWeight="SemiBold" />
 
             <StackPanel Grid.Row="1" Spacing="6">
-                <TextBlock Text="Target (fill from a scanned udp:// QR on the Scan tab)" FontSize="12"
+                <StackPanel Orientation="Horizontal" Spacing="18">
+                    <RadioButton x:Name="UdpRadio" GroupName="voiceTransport" IsChecked="True"
+                                 Content="UDP" Click="OnTransportModeClicked" />
+                    <RadioButton x:Name="PinholeRadio" GroupName="voiceTransport"
+                                 Content="Pinhole / iroh (encrypted)" Click="OnTransportModeClicked" />
+                </StackPanel>
+
+                <TextBlock x:Name="UdpTargetLabel" Text="Target (fill from a scanned udp:// QR on the Scan tab)" FontSize="12"
                            Foreground="{DynamicResource OpusTextSecondaryBrush}" />
-                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
+                <Grid x:Name="UdpTargetPanel" ColumnDefinitions="*,Auto" ColumnSpacing="10">
                     <TextBox Grid.Column="0" x:Name="HostBox" Watermark="host or [ipv6]" />
                     <TextBox Grid.Column="1" x:Name="PortBox" Width="110" Watermark="port" />
                 </Grid>
+
+                <TextBlock x:Name="PinholeTargetLabel" IsVisible="False" FontSize="12"
+                           Foreground="{DynamicResource OpusTextSecondaryBrush}"
+                           Text="Connection string (scan a pinhole QR on the Scan tab, or paste one from the receiver)" />
+                <TextBox x:Name="TicketBox" IsVisible="False" Watermark="pinhole1:…"
+                         TextWrapping="Wrap" MinHeight="52" AcceptsReturn="False" />
             </StackPanel>
 
             <StackPanel Grid.Row="2" Spacing="6">
@@ -44,9 +57,26 @@
                 <Button x:Name="StopButton" Content="Stop" IsEnabled="False" Click="OnStopClicked" />
             </StackPanel>
 
-            <TextBlock Grid.Row="6" x:Name="VoiceStatus" TextWrapping="Wrap" MinHeight="48"
+            <!-- Pinhole listener: the receiving half — phone dials this machine's string -->
+            <Border Grid.Row="6" Background="{DynamicResource OpusSurfaceBrush}" CornerRadius="12" Padding="12"
+                    IsVisible="False" x:Name="ListenPanel">
+                <Grid RowDefinitions="Auto,Auto,Auto" RowSpacing="8">
+                    <TextBlock Grid.Row="0" Text="Listen over Pinhole — receive and play a peer's stream"
+                               FontSize="13" FontWeight="SemiBold" />
+                    <TextBox Grid.Row="1" x:Name="ListenTicketBox" IsReadOnly="True" TextWrapping="Wrap"
+                             FontFamily="monospace" MinHeight="52" Watermark="connection string appears here" />
+                    <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="10">
+                        <Button x:Name="ListenStartButton" Classes="emerald" Content="Start listening" Click="OnListenStartClicked" />
+                        <Button x:Name="ListenStopButton" Content="Stop" IsEnabled="False" Click="OnListenStopClicked" />
+                        <Button x:Name="ListenCopyButton" Content="Copy string" IsEnabled="False" Click="OnListenCopyClicked" />
+                        <Button x:Name="ListenQrButton" Content="Show QR" IsEnabled="False" Click="OnListenQrClicked" />
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <TextBlock Grid.Row="7" x:Name="VoiceStatus" TextWrapping="Wrap" MinHeight="48"
                        Foreground="{DynamicResource OpusTextSecondaryBrush}"
-                       Text="Pick a source and a target, then start. The test tone needs no microphone — it proves the whole pipeline (PCM → Opus → RTP → UDP) on headless machines." />
+                       Text="Pick a transport, a source and a target, then start. UDP streams plain RTP; Pinhole dials the ticket first (direct path, iroh relay fallback) and shows the live path while streaming. The test tone needs no microphone." />
         </Grid>
 
         <!-- Right: stats -->

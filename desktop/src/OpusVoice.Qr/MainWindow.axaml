@@ -10,7 +10,7 @@
         <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="12" Margin="0,0,0,14">
             <Border Width="30" Height="30" CornerRadius="9" Background="{DynamicResource OpusAccentBrush}" />
             <TextBlock Text="OpusVoice QR" FontSize="21" FontWeight="SemiBold" VerticalAlignment="Center" />
-            <TextBlock Text="scan · generate · voice · history" Foreground="{DynamicResource OpusTextTertiaryBrush}"
+            <TextBlock Text="scan · generate · voice · device · history" Foreground="{DynamicResource OpusTextTertiaryBrush}"
                        VerticalAlignment="Center" Margin="2,3,0,0" />
         </StackPanel>
 
@@ -18,11 +18,14 @@
             <TabItem Header="Scan">
                 <views:ScanView x:Name="ScanView" />
             </TabItem>
-            <TabItem Header="Generate">
-                <views:GenerateView />
+            <TabItem Header="Generate" x:Name="GenerateTab">
+                <views:GenerateView x:Name="GenerateView" />
             </TabItem>
             <TabItem Header="Voice" x:Name="VoiceTab">
                 <views:VoiceView x:Name="VoiceView" />
+            </TabItem>
+            <TabItem Header="Device" x:Name="DeviceTab">
+                <views:DeviceView x:Name="DeviceView" />
             </TabItem>
             <TabItem Header="History" x:Name="HistoryTab">
                 <views:HistoryView x:Name="HistoryView" />

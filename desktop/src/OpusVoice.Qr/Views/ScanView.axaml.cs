@@ -25,6 +25,9 @@ public partial class ScanView : UserControl
     /// <summary>Raised when the user wants a scanned udp:// payload to become the Voice tab target.</summary>
     public event Action<string, int>? UdpTargetChosen;
 
+    /// <summary>Raised when the user wants a scanned pinhole ticket to become the Voice tab target.</summary>
+    public event Action<string>? PinholeTargetChosen;
+
     public ScanView()
     {
         InitializeComponent();
@@ -72,9 +75,14 @@ public partial class ScanView : UserControl
 
     private void OnUseAsVoiceTargetClicked(object? sender, RoutedEventArgs e)
     {
-        if (QrPayload.Parse(_scannedText ?? string.Empty) is QrPayload.UdpEndpoint udp)
+        switch (QrPayload.Parse(_scannedText ?? string.Empty))
         {
-            UdpTargetChosen?.Invoke(udp.Host, udp.Port);
+            case QrPayload.UdpEndpoint udp:
+                UdpTargetChosen?.Invoke(udp.Host, udp.Port);
+                break;
+            case QrPayload.PinholeTicket:
+                PinholeTargetChosen?.Invoke((_scannedText ?? string.Empty).Trim());
+                break;
         }
     }
 
@@ -147,7 +155,7 @@ public partial class ScanView : UserControl
         SetBadge(payload);
         DetailText.Text = string.Join('\n', PayloadFormatter.Describe(payload));
         CopyResultButton.IsEnabled = true;
-        UseAsVoiceTargetButton.IsVisible = payload is QrPayload.UdpEndpoint;
+        UseAsVoiceTargetButton.IsVisible = payload is QrPayload.UdpEndpoint or QrPayload.PinholeTicket;
 
         HistoryStore.Instance.Append(text);
     }

@@ -26,11 +26,14 @@ View your app in AI Studio: https://ai.studio/apps/72a50948-fead-45ec-bfa7-75673
 Free CI/CD via [GitHub Actions](https://github.com/features/actions) (`.github/workflows/android.yml`):
 
 - **Every push / PR:** builds a debug APK and runs unit tests.
-- **Push a tag `v*`:** builds a **signed release APK + AAB** and publishes them to a GitHub Release.
+- **Push a tag `v*`:** builds a **signed release APK + AAB**, self-contained **desktop
+  console builds** (linux-x64 tar.gz; win-x64, osx-x64, osx-arm64 zips — each with its
+  native OpenCV runtime for the Scan tab), and the **web console bundle**, and attaches them
+  all to one GitHub Release.
 
 ```bash
 git tag v1.0.0
-git push origin v1.0.0   # release job runs and attaches artifacts
+git push origin v1.0.0   # release jobs run and attach artifacts
 ```
 
 Signing uses the repo secrets `KEYSTORE_BASE64`, `STORE_PASSWORD`, and `KEY_PASSWORD`. The key/credentials live locally in `my-upload-key.jks` / `signing-credentials.txt` (git-ignored) — back them up, they are required to ship updates under the same identity.
@@ -49,6 +52,12 @@ The Android app scans connection-string QR codes straight into its transport fie
 The same system runs in the browser at **https://iafahim.github.io/OpusVoice/** (the `web/` app, deployed by `.github/workflows/web.yml`): scan with the camera or paste, get the typed payload — peer ID, NAT hint, candidates, pinned keys — and turn any string into a scannable QR. It's an installable PWA and all scanning happens on-device.
 
 The web console also **streams voice**: mic (or a test tone) → WebCodecs Opus → the same RTP framing the app uses → a WebSocket bridge. Browsers can't send raw UDP, so run the receiver's new `ws` mode (`dotnet run --project src/OpusVoice.Receiver -- ws 8080`) — it prints a `ws://` QR the console recognizes and can stream to directly. Note the browser mixed-content rule: from the https Pages app only `ws://localhost` targets are reachable; serve the console locally (`npm run dev`) for LAN receivers.
+
+The **Avalonia desktop console** (`desktop/`) pairs with both: it scans, generates and
+streams like the web console, dials **Pinhole / iroh tickets directly** (encrypted session,
+live path + RTT in the stats), listens for the phone to dial in and plays its stream, and
+controls a USB-connected phone over adb (install APK, launch, logcat). Release tags build it
+self-contained for Linux, Windows and macOS.
 
 ## Pinhole transport (NAT traversal + E2E encryption)
 

@@ -4,6 +4,8 @@ VisualStudioVersion = 17.0.31903.59
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OpusVoice.Qr.Core", "src\OpusVoice.Qr.Core\OpusVoice.Qr.Core.csproj", "{476A7F58-4E72-47AA-BF7C-85BA8E67C477}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OpusVoice.Qr.Pinhole", "src\OpusVoice.Qr.Pinhole\OpusVoice.Qr.Pinhole.csproj", "{1AEB5AEF-8658-4EE6-BB8C-8623074EC11C}"
+EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OpusVoice.Qr.Audio", "src\OpusVoice.Qr.Audio\OpusVoice.Qr.Audio.csproj", "{E05FD41B-448B-4795-BEA4-E63EBD41BBF1}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OpusVoice.Qr", "src\OpusVoice.Qr\OpusVoice.Qr.csproj", "{CAA091F1-9C05-4ABE-9CAA-D7FAA0F86023}"
@@ -20,6 +22,10 @@ Global
 		{476A7F58-4E72-47AA-BF7C-85BA8E67C477}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{476A7F58-4E72-47AA-BF7C-85BA8E67C477}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{476A7F58-4E72-47AA-BF7C-85BA8E67C477}.Release|Any CPU.Build.0 = Release|Any CPU
+		{1AEB5AEF-8658-4EE6-BB8C-8623074EC11C}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{1AEB5AEF-8658-4EE6-BB8C-8623074EC11C}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{1AEB5AEF-8658-4EE6-BB8C-8623074EC11C}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{1AEB5AEF-8658-4EE6-BB8C-8623074EC11C}.Release|Any CPU.Build.0 = Release|Any CPU
 		{E05FD41B-448B-4795-BEA4-E63EBD41BBF1}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{E05FD41B-448B-4795-BEA4-E63EBD41BBF1}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{E05FD41B-448B-4795-BEA4-E63EBD41BBF1}.Release|Any CPU.ActiveCfg = Release|Any CPU
