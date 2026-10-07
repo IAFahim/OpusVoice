@@ -22,8 +22,9 @@ import kotlin.math.sqrt
 class AudioPlayer(
     private val jitterBuffer: JitterBuffer,
     // Mutable so the ViewModel can swap in a reconfigured codec (e.g. after a
-    // bitrate change); the playout loop reads it fresh on every packet.
-    var codec: OpusCodec,
+    // bitrate change); the playout loop reads it fresh on every packet. Volatile:
+    // the swap happens on the main thread, the read on the IO playout thread.
+    @Volatile var codec: OpusCodec,
     private val onPlayoutLevelUpdate: (db: Float, isPlaying: Boolean) -> Unit
 ) {
     companion object {
@@ -95,10 +96,27 @@ class AudioPlayer(
     }
 
     private suspend fun runPlayoutLoop(track: AudioTrack) {
+        var emptyDecodes = 0
+        var decodedFrames = 0
         while (scope.isActive && isPlaying) {
             when (val result = jitterBuffer.pollNextPlayout()) {
                 is JitterBuffer.PlayoutResult.PacketReady -> {
                     val pcm = codec.decode(result.packet.payload)
+                    if (pcm.isEmpty()) {
+                        // MediaCodec warm-up drops a frame or two; a permanent stream of
+                        // empty decodes means the decoder never produces output at all.
+                        emptyDecodes++
+                        if (emptyDecodes % 50 == 1) {
+                            val payload = result.packet.payload
+                            Log.w(TAG, "decode returned empty x$emptyDecodes (frame ${payload.size} B, " +
+                                "head=${payload.take(4).joinToString(",") { (it.toInt() and 0xFF).toString(16) }})")
+                        }
+                    } else {
+                        decodedFrames++
+                        if (decodedFrames == 1) {
+                            Log.i(TAG, "first frame decoded: ${pcm.size} samples")
+                        }
+                    }
                     if (!renderPcm(track, pcm)) break
                 }
 

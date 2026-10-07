@@ -52,14 +52,29 @@ class OpusCodec(
     private var encoder: MediaCodec? = null
     private var decoder: MediaCodec? = null
     private var isEncoderConfigured = false
-    private var isDecoderConfigured = false
+    private var emptyDecodeCount = 0
+
+    // The encoder's CODEC_CONFIG output (its real OpusHead). The decoder must be
+    // configured with THIS header at configure() time: a decoder built from a
+    // synthetic header silently accepts buffers but never produces audio on some
+    // Codec2 builds. Decoder creation is therefore deferred until the first decode;
+    // receive-only sessions fall back to a synthetic RFC 7845 header.
+    private var pendingDecoderCsd: ByteArray? = null
+    private var decoderBuiltWithCsd: ByteArray? = null
+    private var opusDecoderName: String? = null
+    private var decoderReinitAttempts = 0
 
     var isUsingHardwareOpusEncoder: Boolean = false
         private set
 
     init {
         initEncoder()
-        initDecoder()
+        opusDecoderName = findOpusCodec(isEncoder = false)
+        if (opusDecoderName == null) {
+            Log.i(TAG, "Hardware Opus decoder not registered in MediaCodec. Using adaptive VoIP decoder.")
+        }
+        // Decoder creation is deferred to the first decode() call so it can be
+        // configured with the encoder's real OpusHead as csd-0.
     }
 
     private fun initEncoder() {
@@ -93,42 +108,45 @@ class OpusCodec(
         }
     }
 
-    private fun initDecoder() {
-        val decoderName = findOpusCodec(isEncoder = false)
-        if (decoderName == null) {
-            Log.i(TAG, "Hardware Opus decoder not registered in MediaCodec. Using adaptive VoIP decoder.")
-            isDecoderConfigured = false
-            return
-        }
+    /** RFC 7845 identification header used when no encoder header was captured yet
+     *  (receive-only sessions). */
+    private fun syntheticOpusHead(): ByteArray = ByteBuffer.allocate(19).order(ByteOrder.LITTLE_ENDIAN).apply {
+        put("OpusHead".toByteArray(Charsets.US_ASCII))
+        put(1.toByte()) // Version 1
+        put(channels.toByte()) // Channel count
+        putShort(312.toShort()) // Pre-skip (RFC 7845 recommended default)
+        putInt(sampleRate) // 48000 Hz
+        putShort(0.toShort()) // Output gain
+        put(0.toByte()) // Channel mapping family
+    }.array()
 
-        try {
+    /** Creates + starts the decoder with the given OpusHead as configure-time csd-0. */
+    private fun buildDecoder(csd: ByteArray): MediaCodec? {
+        val decoderName = opusDecoderName ?: return null
+        return try {
             val format = MediaFormat.createAudioFormat(OPUS_MIME, sampleRate, channels)
-
-            // Supply required OpusHead CSD headers for Codec2 to avoid system resource query failure
-            val csd0 = ByteBuffer.allocate(19).order(ByteOrder.LITTLE_ENDIAN).apply {
-                put("OpusHead".toByteArray(Charsets.US_ASCII))
-                put(1.toByte()) // Version 1
-                put(channels.toByte()) // Channel count
-                putShort(312.toShort()) // Pre-skip (RFC 7845 recommended default)
-                putInt(sampleRate) // 48000 Hz
-                putShort(0.toShort()) // Output gain
-                put(0.toByte()) // Channel mapping
-                flip()
-            }
-            format.setByteBuffer("csd-0", csd0)
-
+            format.setByteBuffer("csd-0", ByteBuffer.wrap(csd))
             val codec = MediaCodec.createByCodecName(decoderName)
             codec.configure(format, null, null, 0)
             codec.start()
             decoder = codec
-            isDecoderConfigured = true
-            Log.i(TAG, "Initialized MediaCodec Opus decoder ($decoderName)")
+            decoderBuiltWithCsd = csd
+            Log.i(TAG, "Initialized MediaCodec Opus decoder ($decoderName, ${csd.size} B header)")
+            codec
         } catch (e: Throwable) {
-            Log.w(TAG, "Hardware Opus decoder skipped ($e). Using adaptive VoIP decoder.")
-            decoder?.release()
+            Log.w(TAG, "Hardware Opus decoder init failed ($e). Using adaptive VoIP decoder.")
+            try { decoder?.release() } catch (_: Throwable) {}
             decoder = null
-            isDecoderConfigured = false
+            decoderBuiltWithCsd = null
+            null
         }
+    }
+
+    /** Returns the running decoder, creating it on first use from the encoder's real
+     *  header when available. */
+    private fun decoderForDecode(): MediaCodec? {
+        decoder?.let { return it }
+        return buildDecoder(pendingDecoderCsd ?: syntheticOpusHead())
     }
 
     /**
@@ -164,10 +182,36 @@ class OpusCodec(
                 val bufferInfo = MediaCodec.BufferInfo()
                 var outputIndex = activeEncoder.dequeueOutputBuffer(bufferInfo, TIMEOUT_US)
                 while (outputIndex >= 0) {
-                    // CODEC_CONFIG buffers carry the OpusHead header, not audio.
                     if (bufferInfo.size > 0 &&
-                        bufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG == 0
+                        bufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0
                     ) {
+                        // The encoder's real OpusHead: capture it for the decoder.
+                        val csd = activeEncoder.getOutputBuffer(outputIndex)
+                        if (csd != null) {
+                            val csdBytes = ByteArray(bufferInfo.size)
+                            csd.position(bufferInfo.offset)
+                            csd.get(csdBytes, 0, bufferInfo.size)
+                            if (!csdBytes.contentEquals(pendingDecoderCsd)) {
+                                pendingDecoderCsd = csdBytes
+                                Log.i(
+                                    TAG, "captured encoder OpusHead (${csdBytes.size} B): " +
+                                        csdBytes.take(24).joinToString(" ") { "%02x".format(it) }
+                                )
+                                // A decoder already built from a different header would
+                                // silently stall — drop it so the next decode rebuilds
+                                // with this one.
+                                val running = decoderBuiltWithCsd
+                                if (running != null && !csdBytes.contentEquals(running)) {
+                                    try { decoder?.stop() } catch (_: Throwable) {}
+                                    try { decoder?.release() } catch (_: Throwable) {}
+                                    decoder = null
+                                    decoderBuiltWithCsd = null
+                                    decoderReinitAttempts = 0
+                                    Log.i(TAG, "decoder will be reconfigured with the encoder's header")
+                                }
+                            }
+                        }
+                    } else if (bufferInfo.size > 0) {
                         val outputBuffer = activeEncoder.getOutputBuffer(outputIndex)
                         if (outputBuffer != null) {
                             val outBytes = ByteArray(bufferInfo.size)
@@ -204,10 +248,12 @@ class OpusCodec(
             return decodeAdaptiveVoip(encodedData)
         }
 
-        val activeDecoder = decoder
-        if (isDecoderConfigured && activeDecoder != null) {
+        val activeDecoder = decoderForDecode()
+        if (activeDecoder != null) {
+            var inputIndex = -2
+            var outputIndex = -2
             try {
-                val inputIndex = activeDecoder.dequeueInputBuffer(TIMEOUT_US)
+                inputIndex = activeDecoder.dequeueInputBuffer(TIMEOUT_US)
                 if (inputIndex >= 0) {
                     val inputBuffer = activeDecoder.getInputBuffer(inputIndex)
                     if (inputBuffer != null) {
@@ -220,11 +266,20 @@ class OpusCodec(
                             System.nanoTime() / 1000,
                             0
                         )
+                    } else {
+                        inputIndex = -3
                     }
                 }
 
                 val bufferInfo = MediaCodec.BufferInfo()
-                var outputIndex = activeDecoder.dequeueOutputBuffer(bufferInfo, TIMEOUT_US)
+                outputIndex = activeDecoder.dequeueOutputBuffer(bufferInfo, TIMEOUT_US)
+                // -2 is INFO_OUTPUT_FORMAT_CHANGED (or -3 buffers-change): the decoder's
+                // real buffer follows — poll again instead of treating it as "no output".
+                while (outputIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED ||
+                    outputIndex == MediaCodec.INFO_OUTPUT_BUFFERS_CHANGED
+                ) {
+                    outputIndex = activeDecoder.dequeueOutputBuffer(bufferInfo, 0)
+                }
                 while (outputIndex >= 0) {
                     if (bufferInfo.size > 0 &&
                         bufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG == 0
@@ -239,6 +294,7 @@ class OpusCodec(
                                 shorts[i] = outputBuffer.short
                             }
                             activeDecoder.releaseOutputBuffer(outputIndex, false)
+                            emptyDecodeCount = 0
                             return shorts
                         }
                     }
@@ -247,9 +303,20 @@ class OpusCodec(
                 }
             } catch (e: Throwable) {
                 Log.e(TAG, "Error during MediaCodec Opus decoding", e)
+                // A decoder that slipped into Released/Error mid-stream never comes
+                // back on its own — rebuild it once with the captured header.
+                if (decoderReinitAttempts < 2) {
+                    decoderReinitAttempts++
+                    if (tryReinitDecoder()) return decode(encodedData)
+                }
             }
-            // Decoder latency or transient hiccup: no output this cycle. Decoding
-            // real Opus data with the fallback codec would only produce noise.
+            // Decoder latency or transient hiccup: no output this cycle. A permanent
+            // stream of these means the decoder never starts producing — log enough
+            // to tell which queue index is starving.
+            emptyDecodeCount++
+            if (emptyDecodeCount % 25 == 1) {
+                Log.w(TAG, "decode empty #$emptyDecodeCount: inputIndex=$inputIndex outputIndex=$outputIndex (${encodedData.size} B frame)")
+            }
             return ShortArray(0)
         }
 
@@ -258,6 +325,22 @@ class OpusCodec(
         // Drop them (silence) and say so once instead.
         warnDecoderMissingOnce()
         return ShortArray(0)
+    }
+
+    /** Rebuilds the decoder after a mid-stream death, preferring the captured encoder
+     *  header as csd-0. Returns true when a fresh decoder is configured. */
+    private fun tryReinitDecoder(): Boolean {
+        try {
+            try { decoder?.stop() } catch (_: Throwable) {}
+            try { decoder?.release() } catch (_: Throwable) {}
+        } catch (_: Throwable) {}
+        decoder = null
+        decoderBuiltWithCsd = null
+        val rebuilt = buildDecoder(pendingDecoderCsd ?: syntheticOpusHead()) != null
+        if (rebuilt) {
+            Log.i(TAG, "Re-initialized MediaCodec Opus decoder after mid-stream failure (attempt $decoderReinitAttempts)")
+        }
+        return rebuilt
     }
 
     private var decoderMissingWarned = false
@@ -413,6 +496,6 @@ class OpusCodec(
             decoder?.release()
         } catch (_: Throwable) {}
         decoder = null
-        isDecoderConfigured = false
+        decoderBuiltWithCsd = null
     }
 }

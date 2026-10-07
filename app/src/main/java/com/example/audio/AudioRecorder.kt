@@ -26,8 +26,9 @@ enum class TransmissionMode {
 class AudioRecorder(
     private val dspManager: AudioDspManager,
     // Mutable so the ViewModel can swap in a reconfigured codec (e.g. after a
-    // bitrate change); the capture loop reads it fresh on every frame.
-    var codec: OpusCodec,
+    // bitrate change); the capture loop reads it fresh on every frame. Volatile:
+    // the swap happens on the main thread, the read on the IO capture thread.
+    @Volatile var codec: OpusCodec,
     private val onRtpPacketReady: (RtpPacket) -> Unit,
     private val onAudioLevelUpdate: (db: Float, peak: Float, isTransmitting: Boolean) -> Unit
 ) {
@@ -46,11 +47,22 @@ class AudioRecorder(
     var transmissionMode: TransmissionMode = TransmissionMode.VOICE_ACTIVITY
     var isPttPressed: Boolean = false
 
-    // WebRTC RTP session state
-    private var sequenceNumber: Int = 0
+    // WebRTC RTP session state. sequenceNumber/rtpTimestamp persist across restarts:
+    // re-randomizing on a mid-session recorder restart makes the jitter buffer see a
+    // backward jump and drop every packet until the old maximum is passed again.
+    private var sequenceNumber: Int = (0..65535).random()
     private var rtpTimestamp: Long = 0
     private val ssrc: Long = Random().nextInt().toLong() and 0xFFFFFFFFL
     var rtpPayloadType: Int = AudioConfig.DEFAULT_RTP_PAYLOAD_TYPE_WEBRTC
+
+    /**
+     * Recording source. VOICE_COMMUNICATION routes through the platform's comm processing
+     * chain — on many OEM builds that chain has source-level echo suppression which
+     * hard-mutes the mic whenever the app is also playing the audio back (loopback
+     * monitoring reads a flat -80 dBFS). Loopback therefore switches to the plain MIC
+     * source; network VoIP keeps VOICE_COMMUNICATION for its AEC/NS.
+     */
+    var audioSource: Int = MediaRecorder.AudioSource.VOICE_COMMUNICATION
 
     @SuppressLint("MissingPermission")
     fun startRecording(): Boolean {
@@ -65,7 +77,7 @@ class AudioRecorder(
 
         try {
             val record = AudioRecord(
-                MediaRecorder.AudioSource.VOICE_COMMUNICATION,
+                audioSource,
                 AudioConfig.SAMPLE_RATE,
                 AudioFormat.CHANNEL_IN_MONO,
                 AudioFormat.ENCODING_PCM_16BIT,
@@ -84,8 +96,6 @@ class AudioRecorder(
             record.startRecording()
             audioRecord = record
             isRecording = true
-            sequenceNumber = (0..65535).random()
-            rtpTimestamp = 0
 
             recordingJob = scope.launch {
                 runCaptureLoop(record)

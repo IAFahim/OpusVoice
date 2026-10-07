@@ -165,6 +165,8 @@ class OpusVoiceViewModel(application: Application) : AndroidViewModel(applicatio
     // One-shot diagnostics for silent-failure paths the user would otherwise never see.
     private var gatedIncomingNotified = false
     private var pinholeOversizeNotified = false
+    // AEC state saved while loopback mutes it, restored when loopback ends.
+    private var aecBeforeLoopback: Boolean? = null
 
     val presets = listOf(
         ConnectionPreset("Local Loopback", "127.0.0.1", 5004, "Test mic, Opus encoding & Jitter Buffer locally"),
@@ -281,9 +283,11 @@ class OpusVoiceViewModel(application: Application) : AndroidViewModel(applicatio
         // 1. Start UDP Transport
         udpTransport.start(host, port, state.localPort)
 
-        // 2. Start Jitter Buffer and Player if listening is enabled
+        // 2. Fresh jitter buffer for every session — restarts mint new sequence numbers,
+        //    and stale playout state would classify every loopback/incoming packet as
+        //    "late" and drop it (received counts climb, speaker stays silent).
+        jitterBuffer.reset()
         if (state.isListening) {
-            jitterBuffer.reset()
             startPlayerOrNotice()
         }
 
@@ -355,8 +359,9 @@ class OpusVoiceViewModel(application: Application) : AndroidViewModel(applicatio
                 connecting.connect()
                 withContext(Dispatchers.Main) {
                     if (pinholeDialer !== connecting) return@withContext
+                    // Fresh jitter buffer per session (restarts mint new sequence numbers).
+                    jitterBuffer.reset()
                     if (_uiState.value.isListening) {
-                        jitterBuffer.reset()
                         startPlayerOrNotice()
                     }
                     val started = audioRecorder.startRecording()
@@ -407,6 +412,10 @@ class OpusVoiceViewModel(application: Application) : AndroidViewModel(applicatio
                 userNotice = "Stream stopped"
             )
         }
+
+        // After isStreaming flips false, or the profile swap restarts the mic
+        // and leaves it recording while the app is idle.
+        restoreNetworkVoiceProfile()
     }
 
     fun toggleStreaming() {
@@ -447,6 +456,9 @@ class OpusVoiceViewModel(application: Application) : AndroidViewModel(applicatio
         val newLoopback = !_uiState.value.isLoopbackMode
         if (newLoopback) {
             startPlayerOrNotice()
+            applyLoopbackMonitorProfile()
+        } else {
+            restoreNetworkVoiceProfile()
         }
         _uiState.update {
             it.copy(
@@ -454,9 +466,46 @@ class OpusVoiceViewModel(application: Application) : AndroidViewModel(applicatio
                 userNotice = when {
                     !newLoopback -> "Loopback disabled"
                     !_uiState.value.isStreaming -> "Loopback armed — start streaming to hear yourself"
-                    else -> "Loopback active (hearing self via Opus & Jitter Buffer)"
+                    else -> "Loopback active (monitor mic, AEC parked — wear headphones to avoid feedback howl)"
                 }
             )
+        }
+    }
+
+    /**
+     * Loopback needs an honest monitor path: park the hardware AEC (it cancels exactly the
+     * played-back voice you want to hear) and record from the plain MIC source — the
+     * VOICE_COMMUNICATION chain on many OEMs carries source-level echo suppression that
+     * mutes the mic outright while the app is playing the audio back. Applies immediately
+     * by restarting a live recorder.
+     */
+    private fun applyLoopbackMonitorProfile() {
+        if (_uiState.value.aecEnabled) {
+            aecBeforeLoopback = true
+            dspManager.setAec(false)
+            _uiState.update { it.copy(aecEnabled = false) }
+        }
+        audioRecorder.audioSource = android.media.MediaRecorder.AudioSource.MIC
+        restartRecorderIfStreaming()
+    }
+
+    private fun restoreNetworkVoiceProfile() {
+        val saved = aecBeforeLoopback
+        if (saved != null) {
+            aecBeforeLoopback = null
+            dspManager.setAec(saved)
+            _uiState.update { it.copy(aecEnabled = saved) }
+        }
+        audioRecorder.audioSource = android.media.MediaRecorder.AudioSource.VOICE_COMMUNICATION
+        restartRecorderIfStreaming()
+    }
+
+    private fun restartRecorderIfStreaming() {
+        if (!_uiState.value.isStreaming) return
+        audioRecorder.stopRecording()
+        if (!audioRecorder.startRecording()) {
+            stopStreaming()
+            _uiState.update { it.copy(userNotice = "Microphone could not restart for the new profile.") }
         }
     }
 
@@ -491,12 +540,15 @@ class OpusVoiceViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun setBitrate(bitrate: Int) {
         _uiState.update { it.copy(bitrate = bitrate) }
-        // Recreate codec with new bitrate and re-wire the pipeline; recorder
-        // and player hold their own codec reference and must be updated too.
-        opusCodec.release()
+        // Re-wire the pipeline to a fresh codec FIRST, release the old one LAST: the
+        // recorder and player loops decode/encode on IO threads and must never observe
+        // a released codec — a release-before-swap window crashes every subsequent
+        // MediaCodec call and the playout goes permanently silent.
+        val old = opusCodec
         opusCodec = OpusCodec(bitrate = bitrate)
         audioRecorder.codec = opusCodec
         audioPlayer.codec = opusCodec
+        old.release()
         _uiState.update { it.copy(isHardwareOpusEncoder = opusCodec.isUsingHardwareOpusEncoder) }
     }
 
