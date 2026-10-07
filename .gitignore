@@ -25,3 +25,7 @@ interop/InteropRunner/bin/
 interop/InteropRunner/obj/
 web/node_modules/
 web/dist/
+
+# Local interop/manual-test capture artifacts
+capture-*.opus
+capture-*.adpcm
