@@ -52,7 +52,10 @@ internal sealed class TestToneSource : IAudioSource
             var frame = new short[OpusStreamCodec.FrameSamples];
             double phase = 0;
             var clock = Stopwatch.StartNew();
-            long frameTicks = TimeSpan.FromMilliseconds(20).Ticks;
+            long frequency = Stopwatch.Frequency;
+            // 20 ms in Stopwatch ticks (Frequency-based, NOT TimeSpan.Ticks — on Linux
+            // Stopwatch runs at 1 GHz, so TimeSpan ticks would pace frames 100× too fast).
+            long frameTicks = (long)Math.Round(frequency * 0.020);
             long nextDeadline = clock.ElapsedTicks + frameTicks;
 
             while (!ct.IsCancellationRequested)
@@ -68,11 +71,11 @@ internal sealed class TestToneSource : IAudioSource
                 }
                 else
                 {
-                    int sleepMs = (int)(remaining / TimeSpan.TicksPerMillisecond) - 1;
+                    int sleepMs = (int)(remaining * 1000 / frequency) - 1;
                     if (sleepMs > 0) ct.WaitHandle.WaitOne(sleepMs);
                     while (!ct.IsCancellationRequested && clock.ElapsedTicks < nextDeadline)
                     {
-                        Thread.SpinWait(64);
+                        Thread.SpinWait(16);
                     }
                 }
             }
@@ -131,6 +134,10 @@ internal sealed class ArecordSource : IAudioSource
             }
 
             _process = Process.Start(info) ?? throw new InvalidOperationException("arecord did not start");
+            // Drain stderr continuously: a redirected-but-unread pipe fills (~64 KiB of
+            // overrun warnings) and then blocks arecord itself, stalling the pipeline.
+            _process.ErrorDataReceived += (_, _) => { };
+            _process.BeginErrorReadLine();
             var reader = new Thread(ReadStream) { IsBackground = true, Name = "opusvoice-arecord" };
             reader.Start();
         }

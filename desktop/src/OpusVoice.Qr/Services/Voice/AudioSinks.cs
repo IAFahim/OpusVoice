@@ -47,6 +47,11 @@ internal sealed class AplaySink : IAudioSink
 
                 _process = Process.Start(info);
                 if (_process is null) return false;
+                // Drain both pipes so aplay's chatter can never block it (same reasoning as arecord).
+                _process.OutputDataReceived += (_, _) => { };
+                _process.ErrorDataReceived += (_, _) => { };
+                _process.BeginOutputReadLine();
+                _process.BeginErrorReadLine();
             }
 
             var bytes = new byte[count * 2];

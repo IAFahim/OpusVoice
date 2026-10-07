@@ -35,8 +35,12 @@ function toast(message: string): void {
 }
 
 async function copyText(text: string): Promise<void> {
-  await navigator.clipboard.writeText(text)
-  toast('Copied to clipboard')
+  try {
+    await navigator.clipboard.writeText(text)
+    toast('Copied to clipboard')
+  } catch {
+    toast('Copy failed — clipboard is blocked on this origin')
+  }
 }
 
 // ---- tabs (with same-document View Transitions where available) -------------
@@ -117,8 +121,11 @@ function payloadRawText(payload: QrPayload): string {
   switch (payload.kind) {
     case 'pinhole-ticket':
       return payload.ticket
-    case 'udp-endpoint':
-      return `udp://${payload.host}:${payload.port}`
+    case 'udp-endpoint': {
+      // Re-bracket IPv6 so the round-tripped text parses again everywhere.
+      const host = payload.host.includes(':') ? `[${payload.host}]` : payload.host
+      return `udp://${host}:${payload.port}`
+    }
     case 'ws-endpoint':
       return payload.url
     default:
@@ -201,6 +208,7 @@ function stopScan(): void {
   void wakeLock?.release().catch(() => undefined)
   wakeLock = null
   torchOn = false
+  $('#torch').classList.remove('on')
   $('#scan-live').hidden = true
   $('#scan-idle').hidden = false
 }
@@ -226,6 +234,11 @@ async function startScan(): Promise<void> {
     return
   }
   wakeLock = await acquireWakeLock()
+  // Auto-released by the platform on tab hide; null out so the visibilitychange
+  // handler below can re-acquire it while a scan is live.
+  wakeLock?.addEventListener('release', () => {
+    wakeLock = null
+  })
   const torchBtn = $<HTMLButtonElement>('#torch')
   torchBtn.hidden = !camera.torchSupported
   status.textContent = 'scanning…'
@@ -258,7 +271,12 @@ $('#torch').addEventListener('click', async () => {
 // Wake Lock auto-releases when the tab hides; re-acquire if a scan is still live.
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && camera && !wakeLock) {
-    void acquireWakeLock().then(w => (wakeLock = w))
+    void acquireWakeLock().then(w => {
+      wakeLock = w
+      wakeLock?.addEventListener('release', () => {
+        wakeLock = null
+      })
+    })
   }
 })
 
@@ -284,6 +302,7 @@ const qrCanvas = $<HTMLCanvasElement>('#qr-canvas')
 const qrEmpty = $('#qr-empty')
 const qrDetails = $('#qr-details')
 let renderTimer = 0
+let lastRenderOk = false
 
 function updateQrEmptyState(hasText: boolean, rendered: boolean): void {
   qrCanvas.style.visibility = rendered ? 'visible' : 'hidden'
@@ -296,6 +315,7 @@ async function renderGenerate(): Promise<void> {
   if (!text) {
     clearQrCanvas(qrCanvas)
     qrDetails.replaceChildren()
+    lastRenderOk = false
     updateQrEmptyState(false, false)
     return
   }
@@ -305,6 +325,7 @@ async function renderGenerate(): Promise<void> {
   } catch {
     rendered = false
   }
+  lastRenderOk = rendered
   updateQrEmptyState(true, rendered)
   renderResultCard(qrDetails, parseQrPayload(text), false)
 }
@@ -326,7 +347,7 @@ $('#copy-text').addEventListener('click', async () => {
 })
 
 $('#download-png').addEventListener('click', () => {
-  if (!qrInput.value.trim()) return toast('Enter text first')
+  if (!lastRenderOk) return toast('Nothing rendered to export yet')
   qrCanvas.toBlob(blob => {
     if (!blob) return toast('Could not export the QR')
     const url = URL.createObjectURL(blob)
@@ -465,7 +486,13 @@ function normalizeVoiceTarget(raw: string): string | null {
   }
 }
 
+let lastStatsPaint = 0
+
 function renderVoiceStats(stats: VoiceStats): void {
+  // onStats fires per packet (~50/s); repaint the DOM at most ~10/s.
+  const now = performance.now()
+  if (stats.state !== 'idle' && now - lastStatsPaint < 100) return
+  lastStatsPaint = now
   voiceStatsPanel.hidden = stats.state === 'idle'
   $<HTMLSpanElement>('#stat-packets').textContent = String(stats.packets)
   $<HTMLSpanElement>('#stat-dropped').textContent = String(stats.dropped)
@@ -479,7 +506,8 @@ function setVoiceRunning(running: boolean): void {
   $('#voice-stop').hidden = !running
   if (!running) {
     voiceStatus.textContent = 'idle'
-    voiceError.textContent = ''
+    // Deliberately not clearing voiceError here: the message explains why we
+    // returned to idle. The start handler clears it on the next attempt.
   }
 }
 

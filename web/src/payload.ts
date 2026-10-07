@@ -232,7 +232,10 @@ function parseWsEndpoint(text: string): { host: string; port: number } | null {
 function parseUdpEndpoint(text: string): { host: string; port: number } | null {
   if (!text.toLowerCase().startsWith('udp://')) return null
   const body = text.slice('udp://'.length)
-  const port = Number.parseInt(body.slice(body.lastIndexOf(':') + 1), 10)
+  const tail = body.slice(body.lastIndexOf(':') + 1)
+  // Kotlin's toIntOrNull: an optional sign plus digits, no whitespace or trailing junk.
+  if (!/^[+-]?\d+$/.test(tail)) return null
+  const port = Number(tail)
   if (!Number.isInteger(port) || port < 1 || port > 65535) return null
   const hostPart = body.slice(0, body.lastIndexOf(':'))
   if (!hostPart) return null

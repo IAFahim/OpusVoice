@@ -221,6 +221,32 @@ public class ConnectionStringTests
     }
 
     [Fact]
+    public void IrohRelayUrlMustBeAbsoluteHttpsOrLoopbackHttp()
+    {
+        // Mirrors the app's validateIrohUrl: absolute https (http only on loopback),
+        // with a host and no userinfo/query/fragment. The 32-byte key itself is
+        // length-checked only — a documented, display-only leniency vs the app.
+        Assert.NotNull(ConnectionString.TryParse(
+            new Wire().IrohRelay("10.0.0.9", 3340, "http://localhost:3340", 0x5A).Ticket(1, 0)));
+        Assert.Null(ConnectionString.TryParse(
+            new Wire().IrohRelay("10.0.0.9", 3340, "http://relay.example.org", 0x5A).Ticket(1, 0)));
+        Assert.Null(ConnectionString.TryParse(
+            new Wire().IrohRelay("10.0.0.9", 3340, "not a uri at all!!!", 0x5A).Ticket(1, 0)));
+        Assert.Null(ConnectionString.TryParse(
+            new Wire().IrohRelay("10.0.0.9", 3340, "https://user:pass@relay.example.org", 0x5A).Ticket(1, 0)));
+    }
+
+    [Fact]
+    public void TrimSemanticsMatchKotlin()
+    {
+        string ticket = new Wire().Direct("10.0.0.1", 6000).Ticket(1, 0);
+        // U+001C is whitespace to Kotlin (and to us); U+00A0 is whitespace to .NET's
+        // Trim() but NOT to Kotlin — it must lead to a rejection, not a rescue.
+        Assert.NotNull(ConnectionString.TryParse("\u001c" + ticket + "\u001c"));
+        Assert.Null(ConnectionString.TryParse("\u00a0" + ticket));
+    }
+
+    [Fact]
     public void IPv6CandidatesUseFamily16AndBigEndianPorts()
     {
         string ticket = new Wire().Direct("2001:db8::1", 443).Ticket(1, 0);

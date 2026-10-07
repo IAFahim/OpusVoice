@@ -18,7 +18,14 @@ export async function openCamera(video: HTMLVideoElement, facing: 'environment' 
     video: { facingMode: { ideal: facing }, width: { ideal: 1280 }, height: { ideal: 720 } }
   })
   video.srcObject = stream
-  await video.play()
+  try {
+    await video.play()
+  } catch (e) {
+    // Autoplay refusal must not leave the camera running with the indicator on.
+    for (const t of stream.getTracks()) t.stop()
+    video.srcObject = null
+    throw e
+  }
   const track = stream.getVideoTracks()[0]
   if (!track) {
     for (const t of stream.getTracks()) t.stop()

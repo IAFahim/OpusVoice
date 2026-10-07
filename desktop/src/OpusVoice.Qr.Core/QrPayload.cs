@@ -3,7 +3,8 @@ namespace OpusVoice.Qr.Core;
 /// <summary>
 /// Turns raw QR text into the first matching typed payload. Every QR-enabled feature grows a
 /// branch here — the scanner UI stays format-agnostic and hands over whatever the code contained
-/// (a line-by-line port of the Android app's <c>com.example.qr.QrPayload</c> router).
+/// (a port of the Android app's <c>com.example.qr.QrPayload</c> router; the app's newer iroh
+/// <c>endpoint…</c> ticket branch is deliberate future work and routes to Unknown here).
 ///
 /// Recognized today:
 ///  - "pinhole1:…" (or the bare base64 body) — a Pinhole connection string to dial
@@ -26,7 +27,7 @@ public abstract record QrPayload
 
     public static QrPayload Parse(string raw)
     {
-        string text = raw.Trim();
+        string text = ConnectionString.TrimKotlin(raw); // Kotlin trim semantics, not .NET's
         ConnectionString? ticket = ConnectionString.TryParse(text);
         if (ticket is not null) return new PinholeTicket(text, ticket);
         UdpEndpoint? udp = ParseUdpEndpoint(text);

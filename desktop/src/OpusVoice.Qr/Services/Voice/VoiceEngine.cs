@@ -166,6 +166,23 @@ internal sealed class VoiceEngine : IDisposable
     public void Stop()
     {
         if (Interlocked.CompareExchange(ref _running, 0, 1) != 1) return;
+        TearDown();
+        StatusChanged?.Invoke("Stopped.");
+        Stopped?.Invoke();
+    }
+
+    private void Fail(string reason)
+    {
+        // Only the owner of the 1→0 transition reports a failure: a source hitting EOF
+        // after Stop() killed it (arecord's stdout closes) is a clean stop, not an error.
+        if (Interlocked.CompareExchange(ref _running, 0, 1) != 1) return;
+        TearDown();
+        Failed?.Invoke(reason);
+        Stopped?.Invoke();
+    }
+
+    private void TearDown()
+    {
         lock (_gate)
         {
             TryDispose(_source);
@@ -175,15 +192,6 @@ internal sealed class VoiceEngine : IDisposable
             TryDispose(_monitorSink);
             _monitorSink = null;
         }
-
-        StatusChanged?.Invoke("Stopped.");
-        Stopped?.Invoke();
-    }
-
-    private void Fail(string reason)
-    {
-        Stop();
-        Failed?.Invoke(reason);
     }
 
     private static void TryDispose(IDisposable? disposable)

@@ -79,10 +79,13 @@ class PlayerProcessor extends AudioWorkletProcessor {
 registerProcessor('player-processor', PlayerProcessor)
 `
 
-const workletUrl = (code: string) => URL.createObjectURL(new Blob([code], { type: 'application/javascript' }))
-
 export function webCodecsSupported(): boolean {
   return typeof AudioEncoder !== 'undefined' && typeof AudioDecoder !== 'undefined' && typeof AudioData !== 'undefined'
+}
+
+/** lib.dom lacks EncodedAudioChunk.close(); the runtime API has it — callers own the handle. */
+function closeChunk(chunk: EncodedAudioChunk): void {
+  ;(chunk as EncodedAudioChunk & { close?: () => void }).close?.()
 }
 
 export class VoiceStreamer {
@@ -96,10 +99,14 @@ export class VoiceStreamer {
   private decoder: AudioDecoder | null = null
   private readonly packetizer = new RtpPacketizer()
   private toneTimer = 0
+  private toneDue = 0
   private statsTimer = 0
   private startedAt = 0
   private samplesSent = 0
   private tonePhase = 0
+  /** Bumped on every start/stop; async continuations from an older session must not resurrect it. */
+  private epoch = 0
+  private wsErrored = false
 
   constructor(private readonly options: VoiceOptions) {}
 
@@ -107,21 +114,29 @@ export class VoiceStreamer {
     if (!webCodecsSupported()) {
       throw new Error('This browser has no WebCodecs audio support — voice needs Chrome or Edge.')
     }
+    const epoch = ++this.epoch
+    this.wsErrored = false
     this.update({ state: 'connecting' })
     this.ws = new WebSocket(this.options.url)
     this.ws.binaryType = 'arraybuffer'
-    this.ws.onopen = () => void this.beginAudio()
+    this.ws.onopen = () => {
+      if (epoch === this.epoch) void this.beginAudio(epoch)
+    }
     this.ws.onclose = () => {
       if (this.stats.state !== 'idle') {
         this.stop()
-        this.options.onError('receiver closed the connection')
+        if (!this.wsErrored) this.options.onError('receiver closed the connection')
       }
     }
-    this.ws.onerror = () => this.options.onError('WebSocket error — is the receiver running in ws mode?')
+    this.ws.onerror = () => {
+      this.wsErrored = true
+      this.options.onError('WebSocket error — is the receiver running in ws mode?')
+    }
   }
 
-  private async beginAudio(): Promise<void> {
+  private async beginAudio(epoch: number): Promise<void> {
     try {
+      const stale = () => epoch !== this.epoch || this.stats.state === 'idle'
       this.context = new AudioContext({ sampleRate: 48000 })
 
       this.encoder = new AudioEncoder({
@@ -146,7 +161,8 @@ export class VoiceStreamer {
           error: e => this.options.onError(`decoder: ${e.message}`)
         })
         this.decoder.configure({ codec: 'opus', sampleRate: 48000, numberOfChannels: 1 })
-        await this.context.audioWorklet.addModule(workletUrl(PLAYER_WORKLET))
+        await this.addWorklet(PLAYER_WORKLET)
+        if (stale()) return
         this.playerNode = new AudioWorkletNode(this.context, 'player-processor', { outputChannelCount: [1] })
         this.playerNode.connect(this.context.destination)
       }
@@ -155,21 +171,49 @@ export class VoiceStreamer {
         this.stream = await navigator.mediaDevices.getUserMedia({
           audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
         })
+        if (stale()) {
+          this.stream.getTracks().forEach(t => t.stop())
+          this.stream = null
+          return
+        }
         const source = this.context.createMediaStreamSource(this.stream)
-        await this.context.audioWorklet.addModule(workletUrl(CAPTURE_WORKLET))
+        await this.addWorklet(CAPTURE_WORKLET)
+        if (stale()) return
         this.captureNode = new AudioWorkletNode(this.context, 'capture-processor', { numberOfOutputs: 0 })
         this.captureNode.port.onmessage = e => this.frame(e.data as Float32Array<ArrayBuffer>)
         source.connect(this.captureNode)
       } else {
-        this.toneTimer = window.setInterval(() => this.frame(this.toneFrame()), 20)
+        // Self-scheduling, wall-clock-anchored pacing: no drift, and a background
+        // tab degrades to dropped frames instead of a burst of catch-up audio.
+        this.toneDue = performance.now() + 20
+        this.toneTimer = window.setTimeout(this.toneTick, 20)
       }
 
       this.startedAt = performance.now()
       this.statsTimer = window.setInterval(() => this.update({ seconds: (performance.now() - this.startedAt) / 1000 }), 250)
       this.update({ state: 'streaming' })
     } catch (e) {
-      this.options.onError(e instanceof Error ? e.message : String(e))
       this.stop()
+      this.options.onError(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  private readonly toneTick = (): void => {
+    if (!this.toneTimer) return
+    this.frame(this.toneFrame())
+    const now = performance.now()
+    // Never chase more than two missed frames; late frames are dropped, not piled up.
+    this.toneDue = Math.max(this.toneDue + 20, now - 40)
+    this.toneTimer = window.setTimeout(this.toneTick, Math.max(0, this.toneDue - now))
+  }
+
+  /** Loads a worklet module from a blob URL and revokes the URL immediately after. */
+  private async addWorklet(code: string): Promise<void> {
+    const url = URL.createObjectURL(new Blob([code], { type: 'application/javascript' }))
+    try {
+      await this.context?.audioWorklet.addModule(url)
+    } finally {
+      URL.revokeObjectURL(url)
     }
   }
 
@@ -201,17 +245,23 @@ export class VoiceStreamer {
     })
     this.samplesSent += samples.length
     this.encoder.encode(data)
+    data.close() // the spec makes the caller own AudioData lifetime
   }
 
   private sendChunk(chunk: EncodedAudioChunk): void {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      closeChunk(chunk)
+      return
+    }
     // Backpressure guard: if the socket is far behind, drop the frame rather than grow latency.
-    if (this.ws.bufferedAmount > 1_000_000) {
+    if (this.ws.bufferedAmount > 64_000) {
       this.update({ dropped: this.stats.dropped + 1 })
+      closeChunk(chunk)
       return
     }
     const payload = new Uint8Array(chunk.byteLength)
     chunk.copyTo(payload)
+    closeChunk(chunk)
     if (this.decoder && this.decoder.state === 'configured') {
       this.decoder.decode(new EncodedAudioChunk({ type: 'key', timestamp: chunk.timestamp, data: payload }))
     }
@@ -227,7 +277,8 @@ export class VoiceStreamer {
 
   stop(): void {
     if (this.stats.state === 'idle') return
-    window.clearInterval(this.toneTimer)
+    this.epoch++ // invalidate any in-flight start() continuation
+    window.clearTimeout(this.toneTimer)
     window.clearInterval(this.statsTimer)
     this.toneTimer = 0
     this.statsTimer = 0
@@ -249,7 +300,10 @@ export class VoiceStreamer {
     this.context = null
     const ws = this.ws
     this.ws = null
-    if (ws && ws.readyState === WebSocket.OPEN) ws.close(1000, 'stopped')
+    if (ws) {
+      ws.onopen = null
+      if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) ws.close(1000, 'stopped')
+    }
     this.update({ state: 'idle' })
   }
 }

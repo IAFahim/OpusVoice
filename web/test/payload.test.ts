@@ -45,6 +45,10 @@ describe('udp endpoints', () => {
     expect(parseQrPayload('udp://:5004').kind).toBe('unknown')
     expect(parseQrPayload('udp://host:0').kind).toBe('unknown')
     expect(parseQrPayload('udp://host:70000').kind).toBe('unknown')
+    // Trailing junk after the port is not a number — the Android app refuses these too.
+    expect(parseQrPayload('udp://host:5004x').kind).toBe('unknown')
+    expect(parseQrPayload('udp://host:8080/path').kind).toBe('unknown')
+    expect(parseQrPayload('udp://host: 8080').kind).toBe('unknown')
     // Unbracketed IPv6 is ambiguous and must be refused.
     expect(parseQrPayload('udp://fe80::1:5004').kind).toBe('unknown')
   })

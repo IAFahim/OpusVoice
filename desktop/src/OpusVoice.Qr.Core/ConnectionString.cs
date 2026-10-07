@@ -47,7 +47,7 @@ public sealed class ConnectionString : IEquatable<ConnectionString>
     public static ConnectionString Parse(string text)
     {
         if (text.Length > MaxLength) throw new ArgumentException($"connection string exceeds {MaxLength} characters");
-        var t = text.Trim();
+        var t = TrimKotlin(text); // Kotlin's String.trim() — not .NET's Unicode-wider Trim()
         if (!t.Contains(':')) t = $"{Scheme}:{t}";
         int colon = t.IndexOf(':');
         if (colon <= 0 || t[..colon] != Scheme) throw new ArgumentException($"expected a \"{Scheme}:\" connection string");
@@ -97,9 +97,12 @@ public sealed class ConnectionString : IEquatable<ConnectionString>
                     reader.ShortText(); // credential
                     break;
                 case CandidateKind.IrohRelay:
-                    reader.ShortText();          // relay URL
-                    reader.Bytes(KeyLength);     // relay public key
+                {
+                    string relayUrl = reader.ShortText();      // relay URL
+                    reader.Bytes(KeyLength);                   // relay public key
+                    ValidateIrohRelayUrl(relayUrl);
                     break;
+                }
             }
 
             candidates.Add(new PinholeCandidate(kind, address));
@@ -140,6 +143,39 @@ public sealed class ConnectionString : IEquatable<ConnectionString>
         {
             return null;
         }
+    }
+
+    /// <summary>
+    /// Mirrors the app's validateIrohUrl: an absolute https relay URL (http only on loopback),
+    /// with a host, no userinfo/query/fragment, at most 2048 characters. The app additionally
+    /// validates the 32-byte key as an Ed25519 point; here the key is length-checked only —
+    /// a deliberate, display-only leniency.
+    /// </summary>
+    private static void ValidateIrohRelayUrl(string text)
+    {
+        if (text.Length > 2048 || !Uri.TryCreate(text, UriKind.Absolute, out Uri? uri))
+            throw new ArgumentException("invalid iroh relay URL");
+
+        bool schemeOk = uri.Scheme == Uri.UriSchemeHttps
+            || (uri.Scheme == Uri.UriSchemeHttp && uri.Host is "localhost" or "127.0.0.1" or "::1");
+        if (!schemeOk || uri.Host.Length == 0
+            || uri.UserInfo.Length > 0 || uri.Query.Length > 0 || uri.Fragment.Length > 0)
+        {
+            throw new ArgumentException("invalid iroh relay URL");
+        }
+    }
+
+    /// <summary>Kotlin's Char.isWhitespace() for practical input: ASCII controls and space
+    /// (incl. U+001C–U+001F), but not the Unicode non-breaking spaces .NET's Trim() also strips.</summary>
+    internal static bool KotlinWhitespace(char c) => c <= ' ';
+
+    /// <summary><see cref="string.Trim()"/> with Kotlin's whitespace semantics (see <see cref="KotlinWhitespace"/>).</summary>
+    internal static string TrimKotlin(string text)
+    {
+        int start = 0, end = text.Length;
+        while (start < end && KotlinWhitespace(text[start])) start++;
+        while (end > start && KotlinWhitespace(text[end - 1])) end--;
+        return text[start..end];
     }
 
     /// <summary>Strict base64url charset, padding tolerated; anything else is malformed.</summary>
