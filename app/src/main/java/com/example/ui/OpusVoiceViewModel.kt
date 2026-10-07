@@ -400,16 +400,21 @@ class OpusVoiceViewModel(application: Application) : AndroidViewModel(applicatio
         udpTransport.stop()
         jitterBuffer.reset()
 
+        val wasLoopback = _uiState.value.isLoopbackMode
         _uiState.update {
             it.copy(
                 isStreaming = false,
                 isTransmitting = false,
+                // Loopback is a self-test, not a sticky preference: leaving it armed
+                // after stop means the next Start immediately feeds back through the
+                // speaker. Disarm it so a fresh session is always a normal stream.
+                isLoopbackMode = false,
                 isPinholeConnected = false,
                 transportState = TransportState.DISCONNECTED,
                 transportErrorMessage = null,
                 inputDbLevel = -80f,
                 outputDbLevel = -80f,
-                userNotice = "Stream stopped"
+                userNotice = if (wasLoopback) "Stream stopped — loopback disarmed" else "Stream stopped"
             )
         }
 
