@@ -326,6 +326,7 @@ class OpusVoiceViewModel(application: Application) : AndroidViewModel(applicatio
             var dialer: PinholeDialer? = null
             try {
                 val connecting = PinholeDialer(ticket.trim())
+                connecting.debug = true
                 dialer = connecting
                 connecting.onReceived = { bytes ->
                     if (pinholeDialer === connecting) {
