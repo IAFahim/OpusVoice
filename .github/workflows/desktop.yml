@@ -22,10 +22,21 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
+      # OpusVoice.Qr.Pinhole references Pinhole.Net by sibling path (../../.. from
+      # desktop/src/OpusVoice.Qr.Pinhole), matching the local dev layout.
+      - name: Clone Pinhole.Net sibling
+        run: git clone --depth 1 https://github.com/IAFahim/Pinhole.Net "${GITHUB_WORKSPACE}/../Pinhole.Net"
+
       - name: Build (Release)
         run: dotnet build -c Release
         working-directory: desktop
 
       - name: Tests (payload router, RTP, voice pipeline)
         run: dotnet test -c Release --no-build
+        working-directory: desktop
+
+      # Smoke-check the release publish path (see .github/workflows/release.yml for
+      # the full four-RID tag-triggered packaging); linux-x64 only to stay fast.
+      - name: Publish smoke check (linux-x64, self-contained)
+        run: dotnet publish src/OpusVoice.Qr -c Release -r linux-x64 --self-contained -o "$RUNNER_TEMP/publish-smoke"
         working-directory: desktop

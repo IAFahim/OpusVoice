@@ -1,0 +1,172 @@
+# Tag-triggered release packaging: desktop self-contained builds + web console.
+#
+# Why a separate workflow: `on.push` with BOTH `paths:` and `tags:` only runs when
+# BOTH filters match, and tag pushes do not carry paths semantics — a `tags` filter
+# silently breaks inside the paths-filtered desktop.yml / web.yml. Hence this
+# tags-only workflow (plus manual dispatch for testing the packaging).
+#
+# Coexistence with android.yml: the Android workflow also triggers on `v*` tags and
+# attaches the signed APK/AAB to the same GitHub Release with softprops/action-gh-release@v3.
+# The `release-init` job below creates that release first — idempotently and with
+# retries — so this workflow's attach steps and android.yml's both find an existing
+# release instead of racing to create it concurrently.
+
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release-init:
+    name: Ensure GitHub Release exists
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create the release for this tag if it does not exist yet
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF}" != refs/tags/v* ]]; then
+            echo "Ref ${GITHUB_REF} is not a v* tag (manual dispatch from a branch?) —"
+            echo "skipping release creation; the jobs below only build and upload workflow artifacts."
+            exit 0
+          fi
+          tag="${GITHUB_REF_NAME}"
+          # android.yml's release job may get here first (it creates the same release
+          # via softprops/action-gh-release); tolerate that and retry.
+          for attempt in 1 2 3 4 5; do
+            if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              echo "Release $tag already exists."
+              exit 0
+            fi
+            if gh release create "$tag" --repo "$GITHUB_REPOSITORY" \
+                 --verify-tag --latest --generate-notes \
+                 --title "$tag" 2>/dev/null; then
+              echo "Created release $tag."
+              exit 0
+            fi
+            echo "Attempt $attempt: release not created (concurrent creator?); retrying in 10s."
+            sleep 10
+          done
+          # Fail loudly only if the release still does not exist.
+          gh release view "$tag" --repo "$GITHUB_REPOSITORY"
+
+  desktop:
+    name: Desktop self-contained (linux-x64, win-x64, osx-x64, osx-arm64)
+    needs: release-init
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+
+      # OpusVoice.Qr.Pinhole references Pinhole.Net by sibling path (../../.. from
+      # desktop/src/OpusVoice.Qr.Pinhole), matching the local dev layout.
+      - name: Clone Pinhole.Net sibling
+        run: git clone --depth 1 https://github.com/IAFahim/Pinhole.Net "${GITHUB_WORKSPACE}/../Pinhole.Net"
+
+      - name: Build (Release)
+        run: dotnet build -c Release
+        working-directory: desktop
+
+      - name: Tests (payload router, RTP, voice pipeline)
+        run: dotnet test -c Release --no-build
+        working-directory: desktop
+
+      # Cross-RID self-contained publish works from a Linux runner (the win/osx
+      # runtime packs come from NuGet) — no per-OS matrix needed.
+      - name: Publish self-contained for all RIDs
+        working-directory: desktop
+        run: |
+          set -euo pipefail
+          staging="$RUNNER_TEMP/desktop-publish"
+          for rid in linux-x64 win-x64 osx-x64 osx-arm64; do
+            echo "::group::dotnet publish -r $rid --self-contained"
+            dotnet publish src/OpusVoice.Qr -c Release -r "$rid" --self-contained -o "$staging/$rid"
+            echo "::endgroup::"
+          done
+
+      - name: "Package (linux: tar.gz, windows/macOS: zip)"
+        run: |
+          set -euo pipefail
+          staging="$RUNNER_TEMP/desktop-publish"
+          packages="$GITHUB_WORKSPACE/packages"
+          mkdir -p "$packages"
+          tar -C "$staging" -czf "$packages/opusvoice-desktop-linux-x64.tar.gz" linux-x64
+          for rid in win-x64 osx-x64 osx-arm64; do
+            (cd "$staging" && zip -r -q "$packages/opusvoice-desktop-$rid.zip" "$rid")
+          done
+          ls -lh "$packages"
+
+      - name: Upload packages as workflow artifacts
+        uses: actions/upload-artifact@v5
+        with:
+          name: opusvoice-desktop-packages
+          path: packages/*
+          compression-level: 0
+          if-no-files-found: error
+
+      - name: Attach desktop packages to the GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v3
+        with:
+          files: |
+            packages/opusvoice-desktop-linux-x64.tar.gz
+            packages/opusvoice-desktop-win-x64.zip
+            packages/opusvoice-desktop-osx-x64.zip
+            packages/opusvoice-desktop-osx-arm64.zip
+          fail_on_unmatched_files: true
+
+  web:
+    name: Web console
+    needs: release-init
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: web
+
+      - name: Unit tests (payload router parity with the Android app)
+        run: npm test
+        working-directory: web
+
+      - name: Build
+        run: npm run build
+        working-directory: web
+
+      - name: Package web/dist
+        run: |
+          set -euo pipefail
+          cd web/dist
+          zip -r -q "$GITHUB_WORKSPACE/opusvoice-web-dist.zip" .
+          ls -lh "$GITHUB_WORKSPACE/opusvoice-web-dist.zip"
+
+      - name: Upload web bundle as workflow artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: opusvoice-web-dist
+          path: opusvoice-web-dist.zip
+          compression-level: 0
+          if-no-files-found: error
+
+      - name: Attach web bundle to the GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v3
+        with:
+          files: opusvoice-web-dist.zip
+          fail_on_unmatched_files: true
