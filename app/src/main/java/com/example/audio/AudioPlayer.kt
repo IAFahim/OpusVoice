@@ -53,9 +53,14 @@ class AudioPlayer(
         val bufferSize = (AudioConfig.FRAME_BYTES * 4).coerceAtLeast(minBufferSize)
 
         try {
+            // USAGE_MEDIA (not VOICE_COMMUNICATION): this track is a monitor — the user's
+            // own voice played back to them. Voice-comm routing on phones with mode NORMAL
+            // sends output to the earpiece on the in-call volume slider, which reads as
+            // total silence; media routing plays on the speaker at media volume, matching
+            // the desktop loopback monitor and web console.
             val track = AudioTrack(
                 AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
                     .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
                     .build(),
                 AudioFormat.Builder()
@@ -90,13 +95,11 @@ class AudioPlayer(
     }
 
     private suspend fun runPlayoutLoop(track: AudioTrack) {
-        val silenceFrame = ShortArray(AudioConfig.SAMPLES_PER_FRAME)
-
         while (scope.isActive && isPlaying) {
             when (val result = jitterBuffer.pollNextPlayout()) {
                 is JitterBuffer.PlayoutResult.PacketReady -> {
                     val pcm = codec.decode(result.packet.payload)
-                    renderPcm(track, pcm)
+                    if (!renderPcm(track, pcm)) break
                 }
 
                 is JitterBuffer.PlayoutResult.PacketWithLoss -> {
@@ -105,11 +108,11 @@ class AudioPlayer(
                     for (i in plcSamples.indices) {
                         plcSamples[i] = (lastDecodedFrame[i] * 0.4f).toInt().toShort()
                     }
-                    renderPcm(track, plcSamples)
+                    if (!renderPcm(track, plcSamples)) break
 
                     // Render current arrived packet
                     val pcm = codec.decode(result.packet.payload)
-                    renderPcm(track, pcm)
+                    if (!renderPcm(track, pcm)) break
                 }
 
                 is JitterBuffer.PlayoutResult.Buffering,
@@ -127,8 +130,13 @@ class AudioPlayer(
         }
     }
 
-    private fun renderPcm(track: AudioTrack, pcm: ShortArray) {
-        if (pcm.isEmpty()) return
+    /**
+     * Writes one frame to the track. Returns false when the track died under us —
+     * typically stop() releasing it mid-write from another thread — so the playout
+     * loop exits instead of throwing into the coroutine scope.
+     */
+    private fun renderPcm(track: AudioTrack, pcm: ShortArray): Boolean {
+        if (pcm.isEmpty()) return true
 
         // Update PLC cache
         if (pcm.size == lastDecodedFrame.size) {
@@ -137,7 +145,7 @@ class AudioPlayer(
 
         if (isMuted) {
             onPlayoutLevelUpdate(-80f, false)
-            return
+            return true
         }
 
         // Apply volume & measure output dB
@@ -154,8 +162,14 @@ class AudioPlayer(
         val normalizedRms = (rms / 32767.0).coerceIn(0.00001, 1.0)
         val db = (20.0 * log10(normalizedRms)).toFloat().coerceIn(-80f, 0f)
 
-        track.write(renderBuffer, 0, renderBuffer.size)
+        try {
+            track.write(renderBuffer, 0, renderBuffer.size)
+        } catch (e: IllegalStateException) {
+            Log.w(TAG, "AudioTrack write after release — stopping playout loop")
+            return false
+        }
         onPlayoutLevelUpdate(db, true)
+        return true
     }
 
     fun stop() {

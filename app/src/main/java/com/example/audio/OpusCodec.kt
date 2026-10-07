@@ -253,8 +253,19 @@ class OpusCodec(
             return ShortArray(0)
         }
 
-        // Fallback: decode directly
-        return decodeAdaptiveVoip(encodedData)
+        // No MediaCodec Opus decoder on this device. Real Opus frames ('OP'-magic-free)
+        // cannot be decoded here — feeding them to the ADPCM decoder only yields static.
+        // Drop them (silence) and say so once instead.
+        warnDecoderMissingOnce()
+        return ShortArray(0)
+    }
+
+    private var decoderMissingWarned = false
+    private fun warnDecoderMissingOnce() {
+        if (!decoderMissingWarned) {
+            decoderMissingWarned = true
+            Log.w(TAG, "No Opus decoder available; incoming real-Opus frames are being dropped (heard as silence)")
+        }
     }
 
     /**

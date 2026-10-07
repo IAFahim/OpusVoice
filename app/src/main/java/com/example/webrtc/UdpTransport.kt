@@ -36,7 +36,11 @@ data class NetworkTelemetry(
  */
 class UdpTransport(
     private val onPacketReceived: (RtpPacket) -> Unit,
-    private val onStateChanged: (TransportState, String?) -> Unit
+    private val onStateChanged: (TransportState, String?) -> Unit,
+    /** Reports the port actually bound — which differs from the requested one whenever it
+     *  was busy and an ephemeral port was taken. Without this, a UI still showing the
+     *  requested port sends peers at a port nobody listens on. */
+    private val onBoundPort: ((requested: Int, bound: Int) -> Unit)? = null
 ) {
     companion object {
         private const val TAG = "UdpTransport"
@@ -94,6 +98,7 @@ class UdpTransport(
             boundSocket.sendBufferSize = 64 * 1024
             this.localReceivePort = boundSocket.localPort
             this.socket = boundSocket
+            onBoundPort?.invoke(localPort, boundSocket.localPort)
 
             state = TransportState.CONNECTED
             onStateChanged(state, null)

@@ -30,6 +30,12 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        viewModel.stopStreaming()
+        // onDestroy also fires on configuration changes (rotation): tearing the stream
+        // down there kills playback mid-session while the ViewModel survives. Real
+        // teardown happens in the ViewModel's onCleared(); only a finishing activity
+        // needs the eager stop.
+        if (isFinishing) {
+            viewModel.stopStreaming()
+        }
     }
 }

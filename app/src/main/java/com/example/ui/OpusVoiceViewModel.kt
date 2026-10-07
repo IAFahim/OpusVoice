@@ -113,6 +113,18 @@ class OpusVoiceViewModel(application: Application) : AndroidViewModel(applicatio
                     transportErrorMessage = errorMsg
                 )
             }
+        },
+        onBoundPort = { requested, bound ->
+            if (bound != requested) {
+                _uiState.update {
+                    it.copy(
+                        localPort = bound,
+                        userNotice = "Port $requested was busy — receiving on $bound instead"
+                    )
+                }
+            } else {
+                _uiState.update { it.copy(localPort = bound) }
+            }
         }
     )
 
@@ -149,6 +161,10 @@ class OpusVoiceViewModel(application: Application) : AndroidViewModel(applicatio
     private var telemetryJob: Job? = null
     @Volatile private var pinholeDialer: PinholeDialer? = null
     private var pinholeConnectJob: Job? = null
+
+    // One-shot diagnostics for silent-failure paths the user would otherwise never see.
+    private var gatedIncomingNotified = false
+    private var pinholeOversizeNotified = false
 
     val presets = listOf(
         ConnectionPreset("Local Loopback", "127.0.0.1", 5004, "Test mic, Opus encoding & Jitter Buffer locally"),
@@ -188,6 +204,16 @@ class OpusVoiceViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    /** Starts the playout player, surfacing an AudioTrack failure instead of dropping it —
+     *  a speaker that never started is indistinguishable from the playback bug otherwise. */
+    private fun startPlayerOrNotice() {
+        if (!audioPlayer.start()) {
+            _uiState.update {
+                it.copy(userNotice = "Speaker unavailable — AudioTrack failed to start; playback is off")
+            }
+        }
+    }
+
     private fun handleOutgoingRtpPacket(packet: RtpPacket) {
         if (_uiState.value.isLoopbackMode) {
             // Self-test: feed packet directly through jitter buffer
@@ -195,9 +221,22 @@ class OpusVoiceViewModel(application: Application) : AndroidViewModel(applicatio
         }
         val dialer = pinholeDialer
         if (dialer != null && dialer.isConnected) {
-            // Same RTP bytes, tunneled through the encrypted Pinhole session.
+            // Same RTP bytes, tunneled through the encrypted Pinhole session. The session
+            // caps a datagram at 1200 bytes — a 1287-byte worst-case Opus frame + RTP
+            // header would be rejected, so drop it here and say so instead of losing TX
+            // silently inside the dialer.
+            val bytes = packet.toByteArray()
+            if (bytes.size > 1200) {
+                if (!pinholeOversizeNotified) {
+                    pinholeOversizeNotified = true
+                    _uiState.update {
+                        it.copy(userNotice = "Frame too large for Pinhole (${bytes.size} B > 1200) — lower the bitrate")
+                    }
+                }
+                return
+            }
             try {
-                dialer.send(packet.toByteArray())
+                dialer.send(bytes)
             } catch (_: Exception) {
             }
             return
@@ -209,6 +248,18 @@ class OpusVoiceViewModel(application: Application) : AndroidViewModel(applicatio
     private fun handleIncomingRtpPacket(packet: RtpPacket) {
         if (_uiState.value.isListening && !_uiState.value.isLoopbackMode) {
             jitterBuffer.push(packet)
+        } else if (!gatedIncomingNotified) {
+            // Audio is arriving but the playout gate drops it: tell the user once,
+            // otherwise "receiving but hearing nothing" looks like a playback bug.
+            gatedIncomingNotified = true
+            val loopback = _uiState.value.isLoopbackMode
+            _uiState.update {
+                it.copy(userNotice = if (loopback) {
+                    "Incoming audio is muted while Loopback is on (loopback feeds your own mic instead)"
+                } else {
+                    "Incoming audio is arriving — enable Listening to hear it"
+                })
+            }
         }
     }
 
@@ -223,13 +274,17 @@ class OpusVoiceViewModel(application: Application) : AndroidViewModel(applicatio
         val host = state.targetHost
         val port = state.targetPort
 
+        // Fresh one-shot diagnostics for this session.
+        gatedIncomingNotified = false
+        pinholeOversizeNotified = false
+
         // 1. Start UDP Transport
         udpTransport.start(host, port, state.localPort)
 
         // 2. Start Jitter Buffer and Player if listening is enabled
         if (state.isListening) {
             jitterBuffer.reset()
-            audioPlayer.start()
+            startPlayerOrNotice()
         }
 
         // 3. Start Audio Recorder
@@ -302,7 +357,7 @@ class OpusVoiceViewModel(application: Application) : AndroidViewModel(applicatio
                     if (pinholeDialer !== connecting) return@withContext
                     if (_uiState.value.isListening) {
                         jitterBuffer.reset()
-                        audioPlayer.start()
+                        startPlayerOrNotice()
                     }
                     val started = audioRecorder.startRecording()
                     if (!started) {
@@ -381,7 +436,7 @@ class OpusVoiceViewModel(application: Application) : AndroidViewModel(applicatio
     fun toggleListen() {
         val newListening = !_uiState.value.isListening
         if (newListening) {
-            audioPlayer.start()
+            startPlayerOrNotice()
         } else {
             audioPlayer.stop()
         }
@@ -391,12 +446,16 @@ class OpusVoiceViewModel(application: Application) : AndroidViewModel(applicatio
     fun toggleLoopback() {
         val newLoopback = !_uiState.value.isLoopbackMode
         if (newLoopback) {
-            audioPlayer.start()
+            startPlayerOrNotice()
         }
         _uiState.update {
             it.copy(
                 isLoopbackMode = newLoopback,
-                userNotice = if (newLoopback) "Loopback active (hearing self via Opus & Jitter Buffer)" else "Loopback disabled"
+                userNotice = when {
+                    !newLoopback -> "Loopback disabled"
+                    !_uiState.value.isStreaming -> "Loopback armed — start streaming to hear yourself"
+                    else -> "Loopback active (hearing self via Opus & Jitter Buffer)"
+                }
             )
         }
     }
