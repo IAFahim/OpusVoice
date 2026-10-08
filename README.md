@@ -74,6 +74,18 @@ HKDF-SHA256, and AES-GCM with replay protection. Incoming RTP is connected to
 playback, handshake flights are retried, and validated direct paths can replace
 relay routes while the relay remains available for fallback. TURN is unsupported.
 
+The dialer discovers public UDP mappings through STUN on the same socket used for audio
+and announces its host/public candidates inside the encrypted session, allowing the PC
+to punch back. Candidate discovery runs in the background, refreshes after interface
+changes and once a minute, and does not delay relay connection setup. Wi-Fi/Ethernet
+link-local candidates are tried on each local LAN interface and omitted on mobile-only
+connections. Established peers' reverse punches are answered without trusting an
+unsealed probe to select the active path.
+
+For a PC with a restricted inbound firewall, run the receiver with `--port N` and permit
+that application-owned UDP port. Carrier NAT does not by itself prove a direct path is
+unavailable; check the receiver's actual path and firewall logs.
+
 For a native iroh ID/ticket, run the receiver in `iroh` mode:
 
 ```bash

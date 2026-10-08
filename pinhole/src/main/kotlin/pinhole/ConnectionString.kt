@@ -3,6 +3,7 @@ package pinhole
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.URI
+import java.io.ByteArrayOutputStream
 
 /** Kind of candidate address a connection string can carry. */
 enum class CandidateKind(val wire: Int) {
@@ -16,7 +17,7 @@ enum class CandidateKind(val wire: Int) {
     }
 }
 
-/** NAT classification hint embedded by the publisher; Symmetric means a direct punch is hopeless. */
+/** NAT scheduling hint. Destination-dependent mappings still permit some direct paths. */
 enum class NatHint(val wire: Int) {
     Unknown(0),
     Cone(1),
@@ -137,6 +138,31 @@ class ConnectionString(
             val candidates = readCandidates(reader, reader.byte())
             require(reader.atEnd) { "trailing bytes in Pinhole announcement" }
             return candidates
+        }
+
+        internal fun writeAnnouncement(candidates: List<PinholeCandidate>): ByteArray {
+            require(candidates.size <= MAX_CANDIDATES)
+            return ByteArrayOutputStream().apply {
+                write(candidates.size)
+                candidates.forEach { candidate ->
+                    val address = candidate.address.address.address
+                    write(address.size)
+                    write(address)
+                    write(candidate.address.port ushr 8)
+                    write(candidate.address.port and 255)
+                    write(candidate.kind.wire)
+                    when (candidate.kind) {
+                        CandidateKind.Direct, CandidateKind.Reflexive -> {}
+                        CandidateKind.IrohRelay -> {
+                            val url = validateIrohUrl(requireNotNull(candidate.relayUrl)).toASCIIString().toByteArray(Charsets.US_ASCII)
+                            val key = requireNotNull(candidate.relayKey)
+                            require(url.size <= 64 && key.size == KEY_LENGTH)
+                            write(url.size); write(url); write(key)
+                        }
+                        CandidateKind.Relay -> throw IllegalArgumentException("TURN announcements are not supported")
+                    }
+                }
+            }.toByteArray()
         }
 
         /** [parse] for untrusted input (QR codes, share intents): null instead of an exception. */

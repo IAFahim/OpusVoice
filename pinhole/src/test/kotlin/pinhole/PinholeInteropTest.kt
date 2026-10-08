@@ -32,7 +32,7 @@ class PinholeInteropTest {
             require(parts.size == 5)
             DynamicTest.dynamicTest(parts[0]) {
                 val dialer = PinholeDialer(parts[1], connectTimeoutMs = 20_000, discoveryUrl = URI(parts[2]),
-                    relayOnly = parts[3] == "relay")
+                    relayOnly = parts[3] == "relay", stunServers = emptyList())
                 dialer.debug = parts[3] == "upgrade"
                 try {
                     if (parts[4] == "reject") {

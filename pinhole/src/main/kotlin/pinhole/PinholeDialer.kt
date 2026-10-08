@@ -10,6 +10,8 @@ import java.net.URI
 import java.security.MessageDigest
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.Callable
+import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.concurrent.thread
 
@@ -24,6 +26,7 @@ class PinholeDialer(
     discoveryUrl: URI = URI("https://dns.iroh.link/pkarr"),
     secretKeySeed: ByteArray? = null,
     private val relayOnly: Boolean = false,
+    private val stunServers: List<InetSocketAddress>? = null,
 ) : Closeable {
     var onConnected: ((InetSocketAddress) -> Unit)? = null
     var onClosed: ((String) -> Unit)? = null
@@ -57,10 +60,19 @@ class PinholeDialer(
     private var remoteToken = 0
     private var recvThread: Thread? = null
     private var punchThread: Thread? = null
+    private var candidateThread: Thread? = null
+    private val candidateWorkers = Executors.newFixedThreadPool(3) { task ->
+        Thread(task, "pinhole-stun").apply { isDaemon = true }
+    }
+    @Volatile private var localCandidates: List<PinholeCandidate> = emptyList()
+    private var lastAnnouncement: ByteArray? = null
+    private var lastAnnounceNanos = 0L
+    private var announcementAttempts = 0
     private var sendSealer: FrameSealer? = null
     private var recvSealer: FrameSealer? = null
     private var acceptedPack: ByteArray? = null
     private var hsckFrame: ByteArray? = null
+    private var answerPunc: ByteArray? = null
 
     private val puncFrame = prefix(FRAME_PUNC, myToken, PREFIX + 64).also {
         Crypto.publicKey(ephPrivate).copyInto(it, PREFIX)
@@ -92,6 +104,7 @@ class PinholeDialer(
             check(!closed.get()) { "dialer was closed while resolving" }
             lastReceiveNanos = System.nanoTime()
             recvThread = thread(isDaemon = true, name = "pinhole-recv") { receiveLoop() }
+            if (!relayOnly) candidateThread = thread(isDaemon = true, name = "pinhole-candidates") { discoverCandidates() }
             punchThread = thread(isDaemon = true, name = "pinhole-maintenance") {
                 try {
                     while (!closed.get()) {
@@ -138,6 +151,8 @@ class PinholeDialer(
         established = false
         discovery.close()
         transport.close()
+        candidateWorkers.shutdownNow()
+        candidateThread?.interrupt()
         punchThread?.interrupt()
         recvThread?.interrupt()
         settled.countDown()
@@ -164,7 +179,7 @@ class PinholeDialer(
         }
         when (frame[0].toInt() and 255) {
             FRAME_PACK -> handlePack(frame, from)
-            FRAME_PUNC -> {}
+            FRAME_PUNC -> handlePunc(frame, from)
             else -> {
                 if (!handshakeReady || readIntLe(frame, 9) != remoteToken) return
                 val plaintext = recvSealer?.open(frame, frame.size) ?: return
@@ -224,10 +239,25 @@ class PinholeDialer(
         hsckFrame = prefix(FRAME_HSCK, myToken, PREFIX + 16).also {
             (if (iAmLo) keys.loConfirm else keys.hiConfirm).copyInto(it, PREFIX)
         }
+        answerPunc = prefix(FRAME_PACK, remoteToken, 97).also {
+            for (i in 0 until 4) it[PREFIX + i] = (myToken ushr (i * 8)).toByte()
+            puncFrame.copyInto(it, PREFIX + 4, PREFIX, PREFIX + 64)
+            (if (iAmLo) keys.loConfirm else keys.hiConfirm).copyInto(it, 81)
+        }
         acceptedPack = frame.copyOf()
         peerPath = from
         handshakeReady = true
         sendHandshakeAck(from)
+    }
+
+    /** Reply to the established peer's reverse punches. Promotion still requires an
+     * authenticated sealed reply, so a replayed plaintext PUNC cannot select a path. */
+    private fun handlePunc(frame: ByteArray, from: IrohPath) {
+        val accepted = acceptedPack ?: return
+        if (!handshakeReady || frame.size != PREFIX + 64 || readIntLe(frame, 9) != remoteToken ||
+            !MessageDigest.isEqual(frame.copyOfRange(PREFIX, PREFIX + 64), accepted.copyOfRange(17, 81))) return
+        answerPunc?.let { sendRaw(from, it) }
+        try { sendSealed(FRAME_PING, uLongLe(System.nanoTime().toULong()), from) } catch (_: IOException) {}
     }
 
     private fun sendHandshakeAck(path: IrohPath) {
@@ -255,6 +285,7 @@ class PinholeDialer(
 
     private fun maintain() {
         val now = System.nanoTime()
+        if (!relayOnly) announceCandidates(now)
         if (!relayOnly && peerPath is IrohPath.Relay && now - lastDirectProbeNanos >= 1_000_000_000L) {
             lastDirectProbeNanos = now
             if (debug) System.err.println("pinhole: probing direct candidates: " + paths.filterIsInstance<IrohPath.Direct>())
@@ -281,35 +312,100 @@ class PinholeDialer(
         }
     }
 
-    private fun pathsFor(peer: ConnectionString): List<IrohPath> = peer.candidates.mapNotNull {
+    private fun pathsFor(peer: ConnectionString): List<IrohPath> = peer.candidates.flatMap {
         when (it.kind) {
-            CandidateKind.Direct, CandidateKind.Reflexive -> if (relayOnly) null else IrohPath.Direct(scopeLinkLocal(it.address))
+            CandidateKind.Direct, CandidateKind.Reflexive -> if (relayOnly) emptyList() else directPaths(it.address)
             CandidateKind.IrohRelay -> {
-                val key = it.relayKey ?: return@mapNotNull null
+                val key = it.relayKey ?: return@flatMap emptyList()
                 require(derivePeerId(key) == peer.peerId) { "iroh relay identity does not match the Pinhole peer ID" }
                 require(peer.endpointKey == null || MessageDigest.isEqual(key, peer.endpointKey))
-                IrohPath.Relay(it.relayUrl ?: return@mapNotNull null, IrohEncoding.hex(key))
+                listOf(IrohPath.Relay(it.relayUrl ?: return@flatMap emptyList(), IrohEncoding.hex(key)))
             }
-            CandidateKind.Relay -> null // TURN uses a different transport.
+            CandidateKind.Relay -> emptyList() // TURN uses a different transport.
         }
     }
 
-    /** A bare IPv6 link-local from a peer's connection string carries no interface scope, and
-     * routing one requires OURS. Radios are single on phones, so the best outgoing link is the
-     * first up WiFi/Ethernet interface that owns an IPv6 address — cellular (rmnet) and tunnel
-     * interfaces sort last so a live SIM connection can't steal the scope. Keeps IPv4 untouched. */
-    private fun scopeLinkLocal(address: InetSocketAddress): InetSocketAddress {
-        val addr = address.address ?: return address
-        if (addr !is Inet6Address || !addr.isLinkLocalAddress || addr.scopeId != 0) return address
+    /** Try each local LAN scope; link-local addresses have no meaning on the mobile network. */
+    private fun directPaths(address: InetSocketAddress): List<IrohPath.Direct> {
+        val addr = address.address ?: return emptyList()
+        if (addr !is Inet6Address || !addr.isLinkLocalAddress || addr.scopeId != 0) return listOf(IrohPath.Direct(address))
         return try {
-            val nif = NetworkInterface.getNetworkInterfaces().toList()
-                .filter { n -> n.isUp && !n.isLoopback && n.interfaceAddresses.any { it.address is Inet6Address } }
-                .minByOrNull { n -> interfaceRank(n.name) }
-            if (nif == null) address
-            else InetSocketAddress(Inet6Address.getByAddress(null, addr.address, nif), address.port)
+            NetworkInterface.getNetworkInterfaces().toList()
+                .filter { n -> n.isUp && !n.isLoopback && interfaceRank(n.name) <= 1 &&
+                    n.interfaceAddresses.any { it.address.isLinkLocalAddress && it.address is Inet6Address } }
+                .sortedBy { interfaceRank(it.name) }.take(4)
+                .mapNotNull { nif -> try {
+                    IrohPath.Direct(InetSocketAddress(Inet6Address.getByAddress(null, addr.address, nif), address.port))
+                } catch (_: Exception) { null } }
         } catch (_: Exception) {
-            address
+            emptyList()
         }
+    }
+
+    private fun hostCandidates(): List<PinholeCandidate> = try {
+        val interfaces = NetworkInterface.getNetworkInterfaces().toList()
+            .filter { it.isUp && !it.isLoopback }
+            .sortedBy { interfaceRank(it.name) }
+        val addresses = interfaces.flatMap { n -> n.interfaceAddresses.map { n to it.address } }
+        val routable = addresses.map { it.second }.filter { !it.isAnyLocalAddress && !it.isMulticastAddress && !it.isLinkLocalAddress }
+        val linkLocal = addresses.filter { interfaceRank(it.first.name) <= 1 && it.second is Inet6Address && it.second.isLinkLocalAddress }
+            .map { it.second }.take(2)
+        (routable + linkLocal).distinct().take(8).map {
+            PinholeCandidate(CandidateKind.Direct, InetSocketAddress(it, transport.localPort))
+        }
+    } catch (_: Exception) { emptyList() }
+
+    /** Refresh after interface changes and once a minute for silent carrier NAT rebinding. */
+    private fun discoverCandidates() {
+        var previousHosts: ByteArray? = null
+        var nextProbe = 0L
+        try {
+            while (!closed.get()) {
+                val hosts = hostCandidates()
+                val hostBody = ConnectionString.writeAnnouncement(hosts)
+                val changed = previousHosts?.contentEquals(hostBody) != true
+                if (changed || System.nanoTime() >= nextProbe) {
+                    if (changed) localCandidates = hosts // stale mappings from the old network must not linger
+                    previousHosts = hostBody
+                    val probes: List<Callable<List<InetSocketAddress>>> = if (stunServers != null) {
+                        stunServers.take(8).map { server -> Callable { listOfNotNull(transport.probeStun(server)) } }
+                    } else listOf("stun.l.google.com" to 19302, "stun.cloudflare.com" to 3478, "global.stun.twilio.com" to 3478).map { (name, port) ->
+                        Callable {
+                            InetAddress.getAllByName(name).take(2).mapNotNull { ip -> transport.probeStun(InetSocketAddress(ip, port)) }
+                        }
+                    }
+                    val observed = candidateWorkers.invokeAll(probes, 5, TimeUnit.SECONDS).flatMap { result ->
+                        try { result.get() } catch (_: Exception) { emptyList() }
+                    }.distinct()
+                    if (closed.get()) break
+                    localCandidates = hosts + observed.map { PinholeCandidate(CandidateKind.Reflexive, it) }
+                    if (debug) System.err.println("pinhole: local UDP candidates: " + localCandidates.map { "${it.kind} ${it.address}" })
+                    nextProbe = System.nanoTime() + 60_000_000_000L
+                }
+                Thread.sleep(5000)
+            }
+        } catch (_: InterruptedException) { } // shutdown cancels DNS/probes and the refresh loop
+    }
+
+    private fun announceCandidates(now: Long) {
+        val relays = paths.filterIsInstance<IrohPath.Relay>().map { it.url }.distinct().map {
+            PinholeCandidate(CandidateKind.IrohRelay, InetSocketAddress(InetAddress.getByAddress(ByteArray(4)), 0),
+                it, transport.identity.key)
+        }
+        val body = ConnectionString.writeAnnouncement((localCandidates + relays).take(ConnectionString.MAX_CANDIDATES))
+        if (lastAnnouncement?.contentEquals(body) != true) {
+            lastAnnouncement = body
+            announcementAttempts = 0
+            lastAnnounceNanos = 0
+        }
+        // Repeat the new snapshot to survive datagram loss; refresh occasionally while relayed.
+        val interval = if (announcementAttempts < 3) 1_000_000_000L else 30_000_000_000L
+        if (now - lastAnnounceNanos < interval) return
+        try {
+            sendSealed(FRAME_ANNOUNCE, body, peerPath ?: return)
+            lastAnnounceNanos = now
+            announcementAttempts++
+        } catch (_: IOException) { }
     }
 
     private fun interfaceRank(name: String): Int = when {

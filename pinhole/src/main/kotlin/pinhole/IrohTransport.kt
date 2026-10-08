@@ -8,6 +8,8 @@ import java.net.InetSocketAddress
 import java.net.URI
 import java.security.MessageDigest
 import java.util.concurrent.LinkedBlockingDeque
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.ScheduledThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
@@ -71,6 +73,11 @@ class IrohTransport(secretKeySeed: ByteArray? = null) : Closeable {
     private val received = LinkedBlockingDeque<IrohDatagram>(256)
     private val end = IrohDatagram(IrohPath.Direct(InetSocketAddress(0)), ByteArray(0))
     private val relays = mutableMapOf<URI, IrohRelay>()
+    private class StunProbe(val server: InetSocketAddress, val request: ByteArray) {
+        val ready = CountDownLatch(1)
+        @Volatile var mapped: InetSocketAddress? = null
+    }
+    private val stunPending = ConcurrentHashMap<String, StunProbe>()
     private val scheduler = ScheduledThreadPoolExecutor(1) { task ->
         Thread(task, "iroh-relay-reconnect").apply { isDaemon = true }
     }.apply { removeOnCancelPolicy = true }
@@ -81,7 +88,12 @@ class IrohTransport(secretKeySeed: ByteArray? = null) : Closeable {
             try {
                 packet.length = buffer.size // DatagramSocket otherwise truncates to the previous packet's length.
                 socket.receive(packet)
-                enqueue(IrohDatagram(IrohPath.Direct(packet.socketAddress as InetSocketAddress), buffer.copyOf(packet.length)))
+                val source = packet.socketAddress as InetSocketAddress
+                val payload = buffer.copyOf(packet.length)
+                val probe = Stun.transaction(payload)?.let { stunPending[it] }
+                if (probe != null && source == probe.server) {
+                    Stun.mappedAddress(payload, probe.request)?.let { probe.mapped = it; probe.ready.countDown() }
+                } else enqueue(IrohDatagram(IrohPath.Direct(source), payload))
             } catch (_: IOException) { if (closed.get()) break }
         }
     }
@@ -116,6 +128,29 @@ class IrohTransport(secretKeySeed: ByteArray? = null) : Closeable {
         return if (closed.get()) null else packet
     }
 
+    /** Probes from the session socket, without stealing datagrams from the receive loop. */
+    internal fun probeStun(server: InetSocketAddress, timeoutMs: Long = 3000): InetSocketAddress? {
+        require(!server.isUnresolved && timeoutMs in 1..10_000)
+        if (closed.get()) return null
+        val request = Stun.request()
+        val key = Stun.transaction(request)!!
+        val probe = StunProbe(server, request)
+        stunPending[key] = probe
+        try {
+            val deadline = System.nanoTime() + timeoutMs * 1_000_000
+            var waitMs = 500L
+            while (!closed.get()) {
+                val remaining = (deadline - System.nanoTime()) / 1_000_000
+                if (remaining <= 0) break
+                socket.send(DatagramPacket(request, request.size, server))
+                if (probe.ready.await(minOf(waitMs, remaining), TimeUnit.MILLISECONDS)) break
+                waitMs = minOf(waitMs * 2, 2000)
+            }
+            return probe.mapped
+        } catch (_: IOException) { return null }
+        finally { stunPending.remove(key, probe) }
+    }
+
     private fun enqueue(packet: IrohDatagram) {
         if (closed.get()) return
         if (!received.offer(packet)) { received.poll(); received.offer(packet) }
@@ -135,6 +170,7 @@ class IrohTransport(secretKeySeed: ByteArray? = null) : Closeable {
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
         socket.close()
+        stunPending.values.forEach { it.ready.countDown() }
         synchronized(relays) { relays.values.forEach { it.close() }; relays.clear() }
         scheduler.shutdownNow()
         receiver.interrupt()
