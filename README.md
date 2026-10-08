@@ -92,7 +92,13 @@ For a native iroh ID/ticket, run the receiver in `iroh` mode:
 dotnet run --project src/OpusVoice.Receiver -- iroh
 ```
 
-This uses Pinhole.Net's `PublishIrohAddress = true`. Its signed native discovery
+Normal desktop listening and both receiver modes enable LAN announcements, signed
+endpoint publication, and direct-address publication by default. The `iroh` mode
+selects the native ID/QR display; the ordinary Pinhole ticket flow remains available.
+The Android dialer already resolves signed records and probes their direct candidates;
+it does not announce a LAN service or publish a listener record itself.
+
+Pinhole.Net's signed native discovery
 record binds the receiver's Ed25519 endpoint ID to its public Pinhole X25519 key
 using `user-data=pinhole-v1:<hex-key>`. The Android client verifies that signature
 before dialing, preserving peer authentication when the native ticket itself

@@ -23,12 +23,12 @@ public sealed class PinholeVoiceListener : IAsyncDisposable
     /// render it) or paste. Includes relay candidates, so it works from any network.</summary>
     public string ConnectionString => _node.ConnectionString;
 
-    /// <summary>The native iroh endpoint ticket, when bound with <c>publishIroh: true</c>.
-    /// Null otherwise.</summary>
+    /// <summary>The native iroh endpoint ticket. Dialing it requires the signed
+    /// discovery record, which this listener publishes by default.</summary>
     public string? IrohTicket => _node.IrohAddress?.ToString();
 
     /// <summary>The native iroh endpoint ID (stable across restarts only when the node's
-    /// identity seed is persisted), when bound with <c>publishIroh: true</c>.</summary>
+    /// identity seed is persisted). Published through signed discovery by default.</summary>
     public string? IrohEndpointId => _node.IrohAddress?.EndpointId;
 
     /// <summary>Whether an iroh or TURN relay is currently live on this node. A peer that
@@ -36,18 +36,20 @@ public sealed class PinholeVoiceListener : IAsyncDisposable
     public bool HasRelay => _node.HasRelay;
 
     /// <summary>
-    /// Binds the listener. <paramref name="publishIroh"/> additionally publishes the signed
+    /// Binds the listener with LAN discovery. <paramref name="publishIroh"/> publishes the signed
     /// endpoint-ID → Pinhole-key discovery record so the Android app can dial by native iroh
-    /// ticket with peer authentication preserved.
+    /// ticket with peer authentication preserved. Publication includes direct candidates
+    /// and is enabled by default; callers can explicitly disable it.
     /// </summary>
-    public static async Task<PinholeVoiceListener> StartAsync(bool publishIroh = false, CancellationToken ct = default)
+    public static async Task<PinholeVoiceListener> StartAsync(bool publishIroh = true, CancellationToken ct = default)
     {
         PinholeNode node = await PinholeNode.BindAsync(new PinholeOptions
         {
             ReceiveBufferCapacity = 64 * 1024, // the library's maximum
             PublishIrohAddress = publishIroh,
-            // Routers that isolate IPv4 between WiFi and Ethernet clients often still bridge
-            // IPv6 — link-local is then the only direct path to a phone on such networks.
+            PublishDirectIrohAddresses = true,
+            EnableLanDiscovery = true,
+            // Link-local candidates provide an additional direct path on the LAN.
             AdvertiseLinkLocal = true,
         }, ct).ConfigureAwait(false);
         return new PinholeVoiceListener(node);

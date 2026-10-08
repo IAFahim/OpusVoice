@@ -48,7 +48,7 @@ internal sealed class PinholeListenerService : IDisposable
     public bool IsRunning => Volatile.Read(ref _running) == 1;
 
     /// <summary>Binds the listener. Returns false (with a status message) when binding fails.</summary>
-    public async Task<bool> StartAsync(bool publishIroh)
+    public async Task<bool> StartAsync(bool publishIroh = true)
     {
         if (Interlocked.CompareExchange(ref _running, 1, 0) != 0) return true;
         try

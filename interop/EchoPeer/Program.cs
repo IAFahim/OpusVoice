@@ -17,6 +17,7 @@ await using var node = await PinholeNode.BindAsync(new PinholeOptions
 {
     Bind = new IPEndPoint(IPAddress.Loopback, 0), StunServers = [],
     IrohRelayUrls = relayUrl is null ? [] : [relayUrl],
+    EnableLanDiscovery = false, // test peers stay on the local fixture network
     EnableNetworkWatch = false, EnablePortMapping = false, EnablePmtud = false,
     ReceiveBufferCapacity = 256, PublishIrohAddress = native,
     PublishDirectIrohAddresses = !relayOnly,

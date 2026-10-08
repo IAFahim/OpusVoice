@@ -160,7 +160,7 @@ public partial class VoiceView : UserControl
         _listener = new PinholeListenerService();
         _listener.StatusChanged += message => Dispatcher.UIThread.Post(() => SetStatus(message, Palette.TextSecondary));
         ListenStartButton.IsEnabled = false;
-        bool ok = await _listener.StartAsync(publishIroh: false);
+        bool ok = await _listener.StartAsync();
         if (!ok)
         {
             ListenStartButton.IsEnabled = true;
