@@ -28,6 +28,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.CancellationException
 import pinhole.PinholeDialer
+import com.example.network.pinholeRouterMapping
 
 data class ConnectionPreset(
     val title: String,
@@ -325,7 +326,7 @@ class OpusVoiceViewModel(application: Application) : AndroidViewModel(applicatio
         pinholeConnectJob = viewModelScope.launch(Dispatchers.IO) {
             var dialer: PinholeDialer? = null
             try {
-                val connecting = PinholeDialer(ticket.trim())
+                val connecting = PinholeDialer(ticket.trim(), portMapping = pinholeRouterMapping(getApplication()))
                 connecting.debug = true
                 dialer = connecting
                 connecting.onReceived = { bytes ->

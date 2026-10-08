@@ -27,6 +27,7 @@ class PinholeDialer(
     secretKeySeed: ByteArray? = null,
     private val relayOnly: Boolean = false,
     private val stunServers: List<InetSocketAddress>? = null,
+    private val portMapping: PortMappingOptions = PortMappingOptions(),
 ) : Closeable {
     var onConnected: ((InetSocketAddress) -> Unit)? = null
     var onClosed: ((String) -> Unit)? = null
@@ -61,6 +62,9 @@ class PinholeDialer(
     private var recvThread: Thread? = null
     private var punchThread: Thread? = null
     private var candidateThread: Thread? = null
+    private var portMapper: RouterPortMapper? = null
+    @Volatile private var mappedEndpoint: InetSocketAddress? = null
+    val portMappedEndpoint: InetSocketAddress? get() = mappedEndpoint
     private val candidateWorkers = Executors.newFixedThreadPool(3) { task ->
         Thread(task, "pinhole-stun").apply { isDaemon = true }
     }
@@ -104,6 +108,11 @@ class PinholeDialer(
             check(!closed.get()) { "dialer was closed while resolving" }
             lastReceiveNanos = System.nanoTime()
             recvThread = thread(isDaemon = true, name = "pinhole-recv") { receiveLoop() }
+            if (!relayOnly && portMapping.enabled) {
+                portMapper = RouterPortMapper(transport.localPort, portMapping) { endpoint ->
+                    if (!closed.get()) mappedEndpoint = endpoint
+                }
+            }
             if (!relayOnly) candidateThread = thread(isDaemon = true, name = "pinhole-candidates") { discoverCandidates() }
             punchThread = thread(isDaemon = true, name = "pinhole-maintenance") {
                 try {
@@ -149,6 +158,8 @@ class PinholeDialer(
         if (!closed.compareAndSet(false, true)) return
         failure = reason
         established = false
+        portMapper?.close()
+        mappedEndpoint = null
         discovery.close()
         transport.close()
         candidateWorkers.shutdownNow()
@@ -365,7 +376,13 @@ class PinholeDialer(
                 val hostBody = ConnectionString.writeAnnouncement(hosts)
                 val changed = previousHosts?.contentEquals(hostBody) != true
                 if (changed || System.nanoTime() >= nextProbe) {
-                    if (changed) localCandidates = hosts // stale mappings from the old network must not linger
+                    if (changed) {
+                        localCandidates = hosts // stale mappings from the old network must not linger
+                        if (previousHosts != null) {
+                            mappedEndpoint = null
+                            portMapper?.refresh()
+                        }
+                    }
                     previousHosts = hostBody
                     val probes: List<Callable<List<InetSocketAddress>>> = if (stunServers != null) {
                         stunServers.take(8).map { server -> Callable { listOfNotNull(transport.probeStun(server)) } }
@@ -392,7 +409,8 @@ class PinholeDialer(
             PinholeCandidate(CandidateKind.IrohRelay, InetSocketAddress(InetAddress.getByAddress(ByteArray(4)), 0),
                 it, transport.identity.key)
         }
-        val body = ConnectionString.writeAnnouncement((localCandidates + relays).take(ConnectionString.MAX_CANDIDATES))
+        val mapping = mappedEndpoint?.let { listOf(PinholeCandidate(CandidateKind.Reflexive, it)) } ?: emptyList()
+        val body = ConnectionString.writeAnnouncement((localCandidates + mapping + relays).distinct().take(ConnectionString.MAX_CANDIDATES))
         if (lastAnnouncement?.contentEquals(body) != true) {
             lastAnnouncement = body
             announcementAttempts = 0

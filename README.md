@@ -82,6 +82,15 @@ link-local candidates are tried on each local LAN interface and omitted on mobil
 connections. Established peers' reverse punches are answered without trusting an
 unsealed probe to select the active path.
 
+The phone also requests an explicit mapping for its audio UDP port through PCP,
+NAT-PMP, and UPnP, in that order. Android supplies gateways from the active OS network
+routes. Discovery runs in the background, renews leases, withdraws expired or stale
+addresses, releases mappings on close, and publishes successful mappings through
+authenticated candidate announcements. `PortMappingOptions(enabled = false)` is an
+opt-out. Unsupported or refusing routers contribute no mapping; direct/STUN/relay
+operation continues. Router control uses local HTTP for UPnP, with responder-pinned
+endpoints, bounded XML/HTTP, and redirects disabled. Public iroh URLs require HTTPS.
+
 For a PC with a restricted inbound firewall, run the receiver with `--port N` and permit
 that application-owned UDP port. Carrier NAT does not by itself prove a direct path is
 unavailable; check the receiver's actual path and firewall logs.
@@ -111,9 +120,11 @@ protocol above them. An unchanged native iroh application endpoint needs its own
 compatible packet protocol engine; sharing a relay or endpoint ID does not change
 the application's session protocol.
 
-The repeatable C# ↔ Kotlin test matrix covers nine cases: direct Pinhole, lost
+The repeatable C# ↔ Kotlin test matrix covers ten cases: direct Pinhole, router mapping, lost
 PACK/HSCK flights, native IDs/tickets with direct and forced relay routes,
-relay-to-direct upgrade, and tampered discovery rejection. It runs in CI.
+relay-to-direct upgrade, and tampered discovery rejection. The mapping case verifies
+that the .NET peer receives the authenticated candidate for the phone's actual audio
+socket port. It runs in CI.
 
 ```bash
 # Requires JDK 21, .NET 10, and the external reference iroh-relay 1.3.0 binary.

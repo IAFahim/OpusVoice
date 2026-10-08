@@ -16,6 +16,7 @@ var cases = new List<string>();
 var configurations = new (string Name, string[] Args, string Path, string Result)[]
 {
     ("pinhole-direct", [], "direct", "accept"),
+    ("pinhole-router-mapping", ["--fake-pcp"], "direct", "accept"),
     ("pinhole-lost-PACK-and-HSCK", ["--drop-handshake"], "direct", "accept"),
     ("iroh-ticket-direct", ["--iroh"], "direct", "accept"),
     ("iroh-id-direct", ["--iroh", "--id"], "direct", "accept"),
@@ -44,12 +45,14 @@ try
         peers.Add((process, config.Name, log));
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         string discovery = "https://dns.iroh.link/pkarr";
+        string mapping = "";
         while (true)
         {
             string line = await lines.Reader.ReadAsync(deadline.Token);
             if (line.StartsWith("DISCOVERY_URL=")) discovery = line["DISCOVERY_URL=".Length..];
+            if (line.StartsWith("MAPPING_GATEWAY=")) mapping = line["MAPPING_GATEWAY=".Length..];
             if (!line.StartsWith("TICKET=")) continue;
-            cases.Add(string.Join('|', config.Name, line["TICKET=".Length..], discovery, config.Path, config.Result));
+            cases.Add(string.Join('|', config.Name, line["TICKET=".Length..], discovery, config.Path, config.Result, mapping));
             Console.WriteLine("ready: " + config.Name);
             break;
         }
@@ -70,8 +73,10 @@ try
             throw new IOException(peer.Name + " did not establish an encrypted C# session");
         if (peer.Name.Contains("lost-") && (!peer.Log.Contains("DROPPED=PACK") || !peer.Log.Contains("DROPPED=HSCK")))
             throw new IOException("handshake loss fixture did not drop both flights");
+        if (peer.Name == "pinhole-router-mapping" && !peer.Log.Any(line => line.StartsWith("MAPPING_VALIDATED ")))
+            throw new IOException("the .NET peer did not receive the authenticated mapping candidate for the audio port");
     }
-    Console.WriteLine("PASS: all nine C# ↔ Kotlin connection cases.");
+    Console.WriteLine("PASS: all ten C# ↔ Kotlin connection cases.");
     return 0;
 }
 finally

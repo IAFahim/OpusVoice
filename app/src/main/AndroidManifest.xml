@@ -11,7 +11,10 @@
     <!-- QR scanning is optional at runtime; a missing camera must not block install. -->
     <uses-feature android:name="android.hardware.camera.any" android:required="false" />
 
+    <!-- UPnP router control uses local HTTP. Its client pins LAN responders and refuses
+         redirects; native discovery/relay URL validation still requires public HTTPS. -->
     <application
+        android:usesCleartextTraffic="true"
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"

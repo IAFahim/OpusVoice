@@ -3,12 +3,15 @@ using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
 using System.Diagnostics;
+using System.Buffers.Binary;
+using System.Reflection;
 using Pinhole;
 
 string? Value(string name) => args.SkipWhile(a => a != name).Skip(1).FirstOrDefault();
 bool relayOnly = args.Contains("--relay-only");
 bool native = args.Contains("--iroh");
 bool dropHandshake = args.Contains("--drop-handshake");
+using var mappingGateway = args.Contains("--fake-pcp") ? new MappingGateway() : null;
 using var referenceRelay = Value("--relay-bin") is { } binary ? await ReferenceRelay.StartAsync(binary) : null;
 Uri? relayUrl = referenceRelay?.Url ?? (Value("--relay-url") is { } relay ? new Uri(relay) : null);
 if (relayOnly && relayUrl is null) throw new ArgumentException("--relay-only requires --relay-url");
@@ -37,6 +40,7 @@ if (native)
     ticket = args.Contains("--id") ? address.EndpointId : address.ToString();
     Console.WriteLine("DISCOVERY_URL=" + directory!.Url);
 }
+if (mappingGateway is not null) Console.WriteLine("MAPPING_GATEWAY=" + mappingGateway.Address);
 Console.WriteLine("TICKET=" + ticket);
 Console.WriteLine("EXPECTED_PATH=" + (relayOnly ? "relay" : "direct"));
 var connections = new List<PinholeConnection>();
@@ -45,15 +49,67 @@ while (true)
     var conn = await node.AcceptAsync();
     connections.Add(conn);
     Console.WriteLine("CONNECTED path=" + conn.Path.Kind + " encrypted=" + conn.IsEncrypted);
-    _ = EchoAsync(conn);
+    _ = EchoAsync(conn, node, mappingGateway);
 }
-static async Task EchoAsync(PinholeConnection conn)
+static async Task EchoAsync(PinholeConnection conn, PinholeNode node, MappingGateway? mapping)
 {
     try
     {
-        while (await conn.ReceiveAsync() is { } payload) conn.Send(payload.Span);
+        while (await conn.ReceiveAsync() is { } payload)
+        {
+            if (mapping is not null && payload.Span.SequenceEqual("mapping-status"u8))
+            {
+                // Observe the core's real authenticated ANNOUNCE handler through its
+                // existing diagnostic accessor; reflection is confined to this test peer.
+                object engine = typeof(PinholeNode).GetProperty("Engine", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(node)!;
+                var candidates = (PinholeCandidate[])engine.GetType().GetMethod("PeerCandidatesSnapshot", BindingFlags.Instance | BindingFlags.NonPublic)!
+                    .Invoke(engine, [conn.PeerId])!;
+                bool observed = mapping.InternalPort == conn.Path.Remote?.Port &&
+                    candidates.Any(c => c.Kind == CandidateKind.Reflexive && c.Address.Equals(mapping.External));
+                conn.Send(observed ? "mapping-confirmed"u8 : "mapping-pending"u8);
+                if (observed) Console.WriteLine("MAPPING_VALIDATED audioPort=" + mapping.InternalPort);
+            }
+            else conn.Send(payload.Span);
+        }
     }
     catch (Exception ex) { Console.Error.WriteLine("echo ended: " + ex.Message); }
+}
+
+// An independent RFC 6887 gateway fixture; it never changes the host router or firewall.
+sealed class MappingGateway : IDisposable
+{
+    private readonly UdpClient _control = new(new IPEndPoint(IPAddress.Loopback, 0));
+    private readonly UdpClient _mapped = new(new IPEndPoint(IPAddress.Loopback, 0));
+    private readonly CancellationTokenSource _stop = new();
+    public IPEndPoint Address => (IPEndPoint)_control.Client.LocalEndPoint!;
+    public IPEndPoint External => (IPEndPoint)_mapped.Client.LocalEndPoint!;
+    public int InternalPort;
+
+    public MappingGateway() => _ = RunAsync();
+    private async Task RunAsync()
+    {
+        try
+        {
+            while (!_stop.IsCancellationRequested)
+            {
+                UdpReceiveResult packet = await _control.ReceiveAsync(_stop.Token);
+                byte[] request = packet.Buffer;
+                if (request.Length != 60 || request[0] != 2 || request[1] != 1 || request[36] != 17
+                    || !request.AsSpan(8, 16).SequenceEqual(packet.RemoteEndPoint.Address.MapToIPv6().GetAddressBytes())) continue;
+                Volatile.Write(ref InternalPort, BinaryPrimitives.ReadUInt16BigEndian(request.AsSpan(40)));
+                byte[] reply = new byte[60];
+                reply[0] = 2; reply[1] = 129;
+                BinaryPrimitives.WriteUInt32BigEndian(reply.AsSpan(4), BinaryPrimitives.ReadUInt32BigEndian(request.AsSpan(4)) == 0 ? 0u : 2u);
+                request.AsSpan(24, 12).CopyTo(reply.AsSpan(24)); reply[36] = 17;
+                request.AsSpan(40, 2).CopyTo(reply.AsSpan(40));
+                BinaryPrimitives.WriteUInt16BigEndian(reply.AsSpan(42), (ushort)External.Port);
+                IPAddress.Loopback.MapToIPv6().GetAddressBytes().CopyTo(reply, 44);
+                await _control.SendAsync(reply, packet.RemoteEndPoint, _stop.Token);
+            }
+        }
+        catch (Exception ex) when (ex is OperationCanceledException or SocketException or ObjectDisposedException) { }
+    }
+    public void Dispose() { _stop.Cancel(); _control.Dispose(); _mapped.Dispose(); }
 }
 
 // Deliberately untrusted, ephemeral local discovery service. Both endpoints

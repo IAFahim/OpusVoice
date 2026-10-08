@@ -8,8 +8,10 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNotNull
 import java.io.File
 import java.net.URI
+import java.net.InetSocketAddress
 import org.junit.jupiter.api.DynamicTest
 import org.junit.jupiter.api.TestFactory
 
@@ -29,10 +31,14 @@ class PinholeInteropTest {
         if (path.isEmpty()) return emptyList()
         return File(path).readLines().filter { it.isNotBlank() }.map { line ->
             val parts = line.split('|')
-            require(parts.size == 5)
+            require(parts.size in 5..6)
             DynamicTest.dynamicTest(parts[0]) {
+                val gateway = parts.getOrNull(5)?.takeIf { it.isNotBlank() }?.let { value ->
+                    InetSocketAddress(value.substringBeforeLast(':'), value.substringAfterLast(':').toInt())
+                }
                 val dialer = PinholeDialer(parts[1], connectTimeoutMs = 20_000, discoveryUrl = URI(parts[2]),
-                    relayOnly = parts[3] == "relay", stunServers = emptyList())
+                    relayOnly = parts[3] == "relay", stunServers = emptyList(),
+                    portMapping = if (gateway == null) PortMappingOptions(enabled = false) else PortMappingOptions(gateways = { listOf(gateway) }))
                 dialer.debug = parts[3] == "upgrade"
                 try {
                     if (parts[4] == "reject") {
@@ -41,6 +47,16 @@ class PinholeInteropTest {
                         assertTrue(!dialer.isConnected)
                     } else {
                         roundTrip(dialer)
+                        if (gateway != null) {
+                            val confirmed = CountDownLatch(1)
+                            dialer.onReceived = { if (it.contentEquals("mapping-confirmed".toByteArray())) confirmed.countDown() }
+                            val deadline = System.nanoTime() + 5_000_000_000L
+                            while (confirmed.count > 0 && System.nanoTime() < deadline) {
+                                dialer.send("mapping-status".toByteArray()); confirmed.await(100, TimeUnit.MILLISECONDS)
+                            }
+                            assertEquals(0L, confirmed.count, "the peer did not receive the mapped audio-socket candidate")
+                            assertNotNull(dialer.portMappedEndpoint)
+                        }
                         if (parts[3] == "upgrade") {
                             val deadline = System.nanoTime() + 5_000_000_000L
                             while (dialer.connectedPath !is IrohPath.Direct && System.nanoTime() < deadline) Thread.sleep(20)
@@ -57,7 +73,7 @@ class PinholeInteropTest {
         val ticket = System.getProperty("pinhole.ticket")?.trim().orEmpty()
         assumeTrue(ticket.isNotEmpty(), "PINHOLE_TICKET not set; interop test skipped")
 
-        val dialer = PinholeDialer(ticket, connectTimeoutMs = 20_000)
+        val dialer = PinholeDialer(ticket, connectTimeoutMs = 20_000, portMapping = PortMappingOptions(enabled = false))
         ConnectionString.parse(ticket).candidates.forEach {
             println("interop: candidate ${it.kind} ${it.address}")
         }
