@@ -46,6 +46,9 @@ public sealed class PinholeVoiceListener : IAsyncDisposable
         {
             ReceiveBufferCapacity = 64 * 1024, // the library's maximum
             PublishIrohAddress = publishIroh,
+            // Routers that isolate IPv4 between WiFi and Ethernet clients often still bridge
+            // IPv6 — link-local is then the only direct path to a phone on such networks.
+            AdvertiseLinkLocal = true,
         }, ct).ConfigureAwait(false);
         return new PinholeVoiceListener(node);
     }
