@@ -2,8 +2,10 @@ package pinhole
 
 import java.io.Closeable
 import java.io.IOException
+import java.net.Inet6Address
 import java.net.InetAddress
 import java.net.InetSocketAddress
+import java.net.NetworkInterface
 import java.net.URI
 import java.security.MessageDigest
 import java.util.concurrent.CountDownLatch
@@ -281,7 +283,7 @@ class PinholeDialer(
 
     private fun pathsFor(peer: ConnectionString): List<IrohPath> = peer.candidates.mapNotNull {
         when (it.kind) {
-            CandidateKind.Direct, CandidateKind.Reflexive -> if (relayOnly) null else IrohPath.Direct(it.address)
+            CandidateKind.Direct, CandidateKind.Reflexive -> if (relayOnly) null else IrohPath.Direct(scopeLinkLocal(it.address))
             CandidateKind.IrohRelay -> {
                 val key = it.relayKey ?: return@mapNotNull null
                 require(derivePeerId(key) == peer.peerId) { "iroh relay identity does not match the Pinhole peer ID" }
@@ -290,6 +292,32 @@ class PinholeDialer(
             }
             CandidateKind.Relay -> null // TURN uses a different transport.
         }
+    }
+
+    /** A bare IPv6 link-local from a peer's connection string carries no interface scope, and
+     * routing one requires OURS. Radios are single on phones, so the best outgoing link is the
+     * first up WiFi/Ethernet interface that owns an IPv6 address — cellular (rmnet) and tunnel
+     * interfaces sort last so a live SIM connection can't steal the scope. Keeps IPv4 untouched. */
+    private fun scopeLinkLocal(address: InetSocketAddress): InetSocketAddress {
+        val addr = address.address ?: return address
+        if (addr !is Inet6Address || !addr.isLinkLocalAddress || addr.scopeId != 0) return address
+        return try {
+            val nif = NetworkInterface.getNetworkInterfaces().toList()
+                .filter { n -> n.isUp && !n.isLoopback && n.interfaceAddresses.any { it.address is Inet6Address } }
+                .minByOrNull { n -> interfaceRank(n.name) }
+            if (nif == null) address
+            else InetSocketAddress(Inet6Address.getByAddress(null, addr.address, nif), address.port)
+        } catch (_: Exception) {
+            address
+        }
+    }
+
+    private fun interfaceRank(name: String): Int = when {
+        name.startsWith("wlan") || name.startsWith("wifi") -> 0
+        name.startsWith("eth") || name.startsWith("usb") -> 1
+        name.startsWith("rmnet") || name.startsWith("ccmni") || name.startsWith("tun") ||
+            name.startsWith("ppp") || name.startsWith("dummy") || name.startsWith("ap") -> 9
+        else -> 5
     }
 
     private fun fromDiscovery(ticket: IrohAddress, record: IrohAddress): ConnectionString {
