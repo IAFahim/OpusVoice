@@ -11,6 +11,7 @@ string? Value(string name) => args.SkipWhile(a => a != name).Skip(1).FirstOrDefa
 bool relayOnly = args.Contains("--relay-only");
 bool native = args.Contains("--iroh");
 bool dropHandshake = args.Contains("--drop-handshake");
+bool ipv6 = args.Contains("--ipv6");
 using var mappingGateway = args.Contains("--fake-pcp") ? new MappingGateway() : null;
 using var referenceRelay = Value("--relay-bin") is { } binary ? await ReferenceRelay.StartAsync(binary) : null;
 Uri? relayUrl = referenceRelay?.Url ?? (Value("--relay-url") is { } relay ? new Uri(relay) : null);
@@ -18,7 +19,7 @@ if (relayOnly && relayUrl is null) throw new ArgumentException("--relay-only req
 using var directory = native ? new PkarrDirectory(args.Contains("--tamper")) : null;
 await using var node = await PinholeNode.BindAsync(new PinholeOptions
 {
-    Bind = new IPEndPoint(IPAddress.Loopback, 0), StunServers = [],
+    Bind = new IPEndPoint(ipv6 ? IPAddress.IPv6Loopback : IPAddress.Loopback, 0), StunServers = [],
     IrohRelayUrls = relayUrl is null ? [] : [relayUrl],
     EnableLanDiscovery = false, // test peers stay on the local fixture network
     EnableNetworkWatch = false, EnablePortMapping = false, EnablePmtud = false,
@@ -28,6 +29,9 @@ await using var node = await PinholeNode.BindAsync(new PinholeOptions
 });
 using var proxy = dropHandshake ? new HandshakeLossProxy(new IPEndPoint(IPAddress.Loopback, node.LocalPort)) : null;
 var code = ConnectionString.Parse(node.ConnectionString);
+if (ipv6) code = new ConnectionString(code.PeerId,
+    [new PinholeCandidate(CandidateKind.Direct, new IPEndPoint(IPAddress.IPv6Loopback, node.LocalPort))],
+    code.NatHint, code.StaticKey, code.EndpointKey);
 if (relayOnly) code = new ConnectionString(code.PeerId,
     code.Candidates.Where(c => c.Kind == CandidateKind.IrohRelay).ToArray(), code.NatHint, code.StaticKey, code.EndpointKey);
 if (proxy is not null) code = new ConnectionString(code.PeerId,

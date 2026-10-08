@@ -16,6 +16,7 @@ var cases = new List<string>();
 var configurations = new (string Name, string[] Args, string Path, string Result)[]
 {
     ("pinhole-direct", [], "direct", "accept"),
+    ("pinhole-lan-ipv6-ticket", ["--ipv6"], "direct", "accept"),
     ("pinhole-router-mapping", ["--fake-pcp"], "direct", "accept"),
     ("pinhole-lost-PACK-and-HSCK", ["--drop-handshake"], "direct", "accept"),
     ("iroh-ticket-direct", ["--iroh"], "direct", "accept"),
@@ -76,7 +77,7 @@ try
         if (peer.Name == "pinhole-router-mapping" && !peer.Log.Any(line => line.StartsWith("MAPPING_VALIDATED ")))
             throw new IOException("the .NET peer did not receive the authenticated mapping candidate for the audio port");
     }
-    Console.WriteLine("PASS: all ten C# ↔ Kotlin connection cases.");
+    Console.WriteLine("PASS: all eleven C# ↔ Kotlin connection cases.");
     return 0;
 }
 finally

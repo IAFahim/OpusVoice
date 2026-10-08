@@ -36,7 +36,17 @@ class PinholeInteropTest {
                 val gateway = parts.getOrNull(5)?.takeIf { it.isNotBlank() }?.let { value ->
                     InetSocketAddress(value.substringBeforeLast(':'), value.substringAfterLast(':').toInt())
                 }
-                val dialer = PinholeDialer(parts[1], connectTimeoutMs = 20_000, discoveryUrl = URI(parts[2]),
+                val ticket = if (parts[0] == "pinhole-lan-ipv6-ticket") {
+                    // Turn the independently generated .NET peer's LAN metadata into
+                    // the same v2 ticket Android NSD selection uses, then dial it.
+                    val peer = ConnectionString.parse(parts[1])
+                    val name = peer.peerId.toString(16).padStart(16, '0')
+                    val attributes = mapOf("id" to name.toByteArray(), "hint" to peer.natHint.wire.toString().toByteArray(),
+                        "key" to peer.staticKey!!.joinToString("") { "%02x".format(it) }.toByteArray())
+                    assertNotNull(LanReceiver.fromService(name, LanReceiver.SERVICE_TYPE,
+                        peer.candidates.single().address.port, peer.candidates.map { it.address.address }, attributes)).ticket
+                } else parts[1]
+                val dialer = PinholeDialer(ticket, connectTimeoutMs = 20_000, discoveryUrl = URI(parts[2]),
                     relayOnly = parts[3] == "relay", stunServers = emptyList(),
                     portMapping = if (gateway == null) PortMappingOptions(enabled = false) else PortMappingOptions(gateways = { listOf(gateway) }))
                 dialer.debug = parts[3] == "upgrade"

@@ -107,6 +107,16 @@ selects the native ID/QR display; the ordinary Pinhole ticket flow remains avail
 The Android dialer already resolves signed records and probes their direct candidates;
 it does not announce a LAN service or publish a listener record itself.
 
+The Android app also browses nearby `_pinhole._udp` receivers by default while it is
+in the foreground. In the Pinhole connection settings, select a nearby receiver to
+fill its encrypted-key ticket, then press Start to stream. The nearby-discovery switch
+disables browsing without affecting manual tickets or an existing stream. Android 14+
+tracks all resolved IPv4/IPv6 addresses continuously; older NSD APIs resolve one
+address at a time and refresh in the background. IPv6 link-local routing uses the
+phone's interface scope. Lost services are withdrawn and browsing is released when
+the app leaves the foreground. First-discovery LAN metadata is unsigned: the session
+proves key possession, while a trusted QR/ticket establishes device identity.
+
 Pinhole.Net's signed native discovery
 record binds the receiver's Ed25519 endpoint ID to its public Pinhole X25519 key
 using `user-data=pinhole-v1:<hex-key>`. The Android client verifies that signature
@@ -120,7 +130,8 @@ protocol above them. An unchanged native iroh application endpoint needs its own
 compatible packet protocol engine; sharing a relay or endpoint ID does not change
 the application's session protocol.
 
-The repeatable C# ↔ Kotlin test matrix covers ten cases: direct Pinhole, router mapping, lost
+The repeatable C# ↔ Kotlin test matrix covers eleven cases: direct Pinhole, an IPv6-only
+LAN receiver ticket generated in Kotlin, router mapping, lost
 PACK/HSCK flights, native IDs/tickets with direct and forced relay routes,
 relay-to-direct upgrade, and tampered discovery rejection. The mapping case verifies
 that the .NET peer receives the authenticated candidate for the phone's actual audio

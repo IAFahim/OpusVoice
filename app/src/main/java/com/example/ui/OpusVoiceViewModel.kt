@@ -29,6 +29,8 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.CancellationException
 import pinhole.PinholeDialer
 import com.example.network.pinholeRouterMapping
+import com.example.network.PinholeLanBrowser
+import pinhole.LanReceiver
 
 data class ConnectionPreset(
     val title: String,
@@ -88,6 +90,9 @@ data class OpusVoiceUiState(
     val usePinhole: Boolean = false,
     val pinholeTicket: String = "",
     val isPinholeConnected: Boolean = false,
+    val lanDiscoveryEnabled: Boolean = true,
+    val nearbyReceivers: List<LanReceiver> = emptyList(),
+    val lanDiscoveryError: String? = null,
 
     // User Message / Snackbar
     val userNotice: String? = null
@@ -162,6 +167,8 @@ class OpusVoiceViewModel(application: Application) : AndroidViewModel(applicatio
     private var telemetryJob: Job? = null
     @Volatile private var pinholeDialer: PinholeDialer? = null
     private var pinholeConnectJob: Job? = null
+    @Volatile private var lanBrowser: PinholeLanBrowser? = null
+    private var discoveryForeground = false
 
     // One-shot diagnostics for silent-failure paths the user would otherwise never see.
     private var gatedIncomingNotified = false
@@ -591,6 +598,34 @@ class OpusVoiceViewModel(application: Application) : AndroidViewModel(applicatio
         _uiState.update { it.copy(pinholeTicket = ticket) }
     }
 
+    fun setLanDiscoveryActive(active: Boolean) {
+        discoveryForeground = active
+        if (!active || !_uiState.value.lanDiscoveryEnabled) {
+            lanBrowser?.close()
+            lanBrowser = null
+            return
+        }
+        if (lanBrowser != null) return
+        lateinit var browser: PinholeLanBrowser
+        browser = PinholeLanBrowser(getApplication(),
+            onPeers = { peers -> if (lanBrowser === browser) _uiState.update { it.copy(nearbyReceivers = peers) } },
+            onError = { error -> if (lanBrowser === browser) _uiState.update { it.copy(lanDiscoveryError = error) } })
+        lanBrowser = browser
+        browser.start()
+    }
+
+    fun setLanDiscoveryEnabled(enabled: Boolean) {
+        _uiState.update { it.copy(lanDiscoveryEnabled = enabled, lanDiscoveryError = null) }
+        setLanDiscoveryActive(discoveryForeground)
+    }
+
+    fun selectLanReceiver(receiver: LanReceiver) {
+        if (_uiState.value.isStreaming || pinholeConnectJob?.isActive == true) return
+        if (!_uiState.value.nearbyReceivers.contains(receiver)) return
+        _uiState.update { it.copy(usePinhole = true, pinholeTicket = receiver.ticket,
+            userNotice = "Receiver selected — press Start to stream") }
+    }
+
     /** Applies a scanned QR code: fills the fields the payload addresses, nothing else. */
     fun handleQrPayload(payload: QrPayload) {
         _uiState.update {
@@ -650,6 +685,8 @@ class OpusVoiceViewModel(application: Application) : AndroidViewModel(applicatio
         audioPlayer.stop()
         udpTransport.stop()
         pinholeDialer?.close()
+        lanBrowser?.close()
+        lanBrowser = null
         dspManager.release()
         opusCodec.release()
     }

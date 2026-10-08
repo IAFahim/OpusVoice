@@ -50,6 +50,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -65,6 +66,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.example.qr.QrScannerScreen
 import com.example.ui.components.AudioDspCard
 import com.example.ui.components.CodecConfigCard
@@ -84,6 +88,19 @@ fun OpusVoiceScreen(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, viewModel) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_START) viewModel.setLanDiscoveryActive(true)
+            if (event == Lifecycle.Event.ON_STOP) viewModel.setLanDiscoveryActive(false)
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        viewModel.setLanDiscoveryActive(lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED))
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            viewModel.setLanDiscoveryActive(false)
+        }
+    }
 
     var hasMicPermission by remember {
         mutableStateOf(
@@ -287,11 +304,16 @@ fun OpusVoiceScreen(
                     isListening = uiState.isListening,
                     usePinhole = uiState.usePinhole,
                     pinholeTicket = uiState.pinholeTicket,
+                    lanDiscoveryEnabled = uiState.lanDiscoveryEnabled,
+                    nearbyReceivers = uiState.nearbyReceivers,
+                    lanDiscoveryError = uiState.lanDiscoveryError,
                     presets = viewModel.presets,
                     onHostChange = { viewModel.setTargetHost(it) },
                     onPortChange = { viewModel.setTargetPort(it) },
                     onUsePinholeToggle = { viewModel.setUsePinhole(it) },
                     onPinholeTicketChange = { viewModel.setPinholeTicket(it) },
+                    onLanDiscoveryToggle = viewModel::setLanDiscoveryEnabled,
+                    onLanReceiverSelect = viewModel::selectLanReceiver,
                     onScanQr = { showQrScanner = true },
                     onPresetSelect = { viewModel.applyPreset(it) },
                     onLoopbackToggle = { viewModel.toggleLoopback() },

@@ -47,6 +47,27 @@ class ConnectionString(
     val staticKey: ByteArray?,
     val endpointKey: ByteArray?,
 ) {
+    /** Encode a v1/v2/v3 ticket. Interface scopes are local routing state and are
+     * deliberately omitted from endpoint bytes, like the .NET implementation. */
+    override fun toString(): String {
+        require(staticKey == null || staticKey.size == KEY_LENGTH)
+        require(endpointKey == null || endpointKey.size == KEY_LENGTH && staticKey != null)
+        val version = if (endpointKey != null) 3 else if (staticKey != null) 2 else 1
+        val payload = ByteArrayOutputStream().apply {
+            write(version)
+            write(if (endpointKey != null) 3 else if (staticKey != null) 1 else 0)
+            repeat(8) { write(((peerId shr (it * 8)) and 255u).toInt()) }
+            write(natHint.wire)
+            write(writeAnnouncement(candidates))
+            staticKey?.let { write(it) }
+            endpointKey?.let { write(it) }
+        }.toByteArray()
+        val text = SCHEME + ":" + org.bouncycastle.util.encoders.Base64.toBase64String(payload)
+            .trimEnd('=').replace('+', '-').replace('/', '_')
+        require(text.length <= MAX_LENGTH)
+        return text
+    }
+
     companion object {
         const val SCHEME = "pinhole1"
         const val MAX_CANDIDATES = 32

@@ -54,6 +54,8 @@ import com.example.ui.theme.CrimsonError
 import com.example.ui.theme.DiscordBlurple
 import com.example.ui.theme.NeonEmerald
 import com.example.webrtc.TransportState
+import pinhole.LanReceiver
+import androidx.compose.ui.text.style.TextOverflow
 
 @Composable
 fun NetworkConfigCard(
@@ -67,11 +69,16 @@ fun NetworkConfigCard(
     isListening: Boolean,
     usePinhole: Boolean,
     pinholeTicket: String,
+    lanDiscoveryEnabled: Boolean,
+    nearbyReceivers: List<LanReceiver>,
+    lanDiscoveryError: String?,
     presets: List<ConnectionPreset>,
     onHostChange: (String) -> Unit,
     onPortChange: (Int) -> Unit,
     onUsePinholeToggle: (Boolean) -> Unit,
     onPinholeTicketChange: (String) -> Unit,
+    onLanDiscoveryToggle: (Boolean) -> Unit,
+    onLanReceiverSelect: (LanReceiver) -> Unit,
     onScanQr: () -> Unit,
     onPresetSelect: (ConnectionPreset) -> Unit,
     onLoopbackToggle: () -> Unit,
@@ -189,6 +196,25 @@ fun NetworkConfigCard(
 
             if (usePinhole) {
                 Spacer(modifier = Modifier.height(10.dp))
+                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("Nearby receivers", style = MaterialTheme.typography.bodyMedium)
+                    Switch(checked = lanDiscoveryEnabled, onCheckedChange = onLanDiscoveryToggle,
+                        modifier = Modifier.testTag("lan_discovery_toggle"))
+                }
+                if (lanDiscoveryEnabled) {
+                    if (nearbyReceivers.isEmpty()) Text(lanDiscoveryError ?: "Looking for receivers on this network…",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    nearbyReceivers.forEach { receiver ->
+                        FilledTonalButton(onClick = { onLanReceiverSelect(receiver) },
+                            enabled = transportState != TransportState.CONNECTED && transportState != TransportState.CONNECTING,
+                            modifier = Modifier.fillMaxWidth().testTag("lan_receiver_${receiver.id}")) {
+                            Text("Receiver ${receiver.id.takeLast(8)} · ${receiver.addresses.first().address.hostAddress}",
+                                maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
                 OutlinedTextField(
                     value = pinholeTicket,
                     onValueChange = onPinholeTicketChange,
