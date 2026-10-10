@@ -183,8 +183,7 @@ Add `-Pandroid.testInstrumentationRunnerArguments.relayOnly=true` to measure a
 forced relay separately. The test verifies the active network, completes the
 encrypted handshake, checks 48 byte-exact echoes at sizes 1–1200, records retries
 and latency percentiles, and checks that close retires the connection. These are
-transport checks; audio, background/suspend, Wi-Fi handoff and VPN require their
-own recorded device scenarios.
+transport checks; audio and background/suspend require their own recorded device scenarios.
 
 For a same-session network test, run the `encryptedConnectionSurvivesNetworkHandoffs`
 method with `networkSequence=wifi,cellular,wifi` or `vpn,wifi,vpn`. Each stage checks
@@ -199,3 +198,10 @@ The [2026-10-10 OPPO LTE report](docs/validation/2026-10-10-oppo-cellular.json)
 records passing automatic-routing and forced-relay cases on Android 16. Both
 used the Singapore iroh relay and returned all 48 datagrams without retries.
 The report includes APK/core assembly hashes and states the untested scenarios.
+
+The [OPPO handoff report](docs/validation/2026-10-10-oppo-handoffs.json) records
+Wi-Fi → LTE → Wi-Fi and Proton VPN → Wi-Fi → Proton VPN passes. Each retained
+one encrypted session and returned all 48 echoes. The first echo after Android
+reported LTE arrived in 8.25 seconds; VPN disconnect/reconnect took 2.14/3.35
+seconds by the same measure. The report pins the tested source and APK/assembly
+hashes; these are foreground transport results on one phone.
