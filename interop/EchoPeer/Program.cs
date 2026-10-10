@@ -15,8 +15,12 @@ bool ipv6 = args.Contains("--ipv6");
 using var mappingGateway = args.Contains("--fake-pcp") ? new MappingGateway() : null;
 bool editPackToken = args.Contains("--edit-pack-token");
 bool physicalNetwork = args.Contains("--physical-network");
+bool tcp = args.Contains("--tcp");
 using var referenceRelay = Value("--relay-bin") is { } binary ? await ReferenceRelay.StartAsync(binary) : null;
+using var secondRelay = args.Contains("--multi-relay") && Value("--relay-bin") is { } secondBinary
+    ? await ReferenceRelay.StartAsync(secondBinary) : null;
 Uri? relayUrl = referenceRelay?.Url ?? (Value("--relay-url") is { } relay ? new Uri(relay) : null);
+Uri[] relayUrls = new[] { relayUrl, secondRelay?.Url }.OfType<Uri>().ToArray();
 if (relayOnly && relayUrl is null) throw new ArgumentException("--relay-only requires --relay-url");
 using var directory = native ? new PkarrDirectory(args.Contains("--tamper")) : null;
 await using var node = await PinholeNode.BindAsync(new PinholeOptions
@@ -24,8 +28,10 @@ await using var node = await PinholeNode.BindAsync(new PinholeOptions
     Bind = new IPEndPoint(ipv6 ? physicalNetwork ? IPAddress.IPv6Any : IPAddress.IPv6Loopback
         : physicalNetwork ? IPAddress.Any : IPAddress.Loopback, 0),
     StunServers = physicalNetwork ? null : [],
-    IrohRelayUrls = relayUrl is null ? physicalNetwork ? null : [] : [relayUrl],
+    IrohRelayUrls = relayUrls.Length == 0 ? physicalNetwork ? null : [] : relayUrls,
     EnableLanDiscovery = false,
+    EnableTcpTransport = tcp,
+    EnableDirectUdp = !args.Contains("--disable-direct-udp"),
     EnableNetworkWatch = false, EnablePortMapping = false, EnablePmtud = false,
     ReceiveBufferCapacity = 256, PublishIrohAddress = native,
     PublishDirectIrohAddresses = !relayOnly,
@@ -34,6 +40,14 @@ await using var node = await PinholeNode.BindAsync(new PinholeOptions
 using var proxy = dropHandshake || editPackToken
     ? new HandshakeLossProxy(new IPEndPoint(IPAddress.Loopback, node.LocalPort), dropHandshake, editPackToken) : null;
 var code = ConnectionString.Parse(node.ConnectionString);
+if (Value("--advertise-loopback-port") is { } forwardedPort)
+{
+    int port = int.Parse(forwardedPort);
+    if (port is < 1 or > 65535) throw new ArgumentOutOfRangeException(nameof(forwardedPort));
+    code = new ConnectionString(code.PeerId,
+        [new PinholeCandidate(CandidateKind.Direct, new IPEndPoint(IPAddress.Loopback, port))],
+        code.NatHint, code.StaticKey, code.EndpointKey);
+}
 if (ipv6) code = new ConnectionString(code.PeerId,
     [new PinholeCandidate(CandidateKind.Direct, new IPEndPoint(IPAddress.IPv6Loopback, node.LocalPort))],
     code.NatHint, code.StaticKey, code.EndpointKey);
@@ -51,6 +65,7 @@ if (native)
 }
 if (mappingGateway is not null) Console.WriteLine("MAPPING_GATEWAY=" + mappingGateway.Address);
 Console.WriteLine("TICKET=" + ticket);
+Console.WriteLine("TCP_LISTENING_PORT=" + node.TcpListeningPort);
 Console.WriteLine("EXPECTED_PATH=" + (relayOnly ? "relay" : physicalNetwork ? "direct-or-relay" : "direct"));
 var connections = new List<PinholeConnection>();
 while (true)
@@ -58,6 +73,7 @@ while (true)
     var conn = await node.AcceptAsync();
     connections.Add(conn);
     Console.WriteLine("CONNECTED path=" + conn.Path.Kind + " encrypted=" + conn.IsEncrypted);
+    Console.WriteLine("TRANSPORT=" + conn.Path.Transport);
     _ = EchoAsync(conn, node, mappingGateway);
 }
 static async Task EchoAsync(PinholeConnection conn, PinholeNode node, MappingGateway? mapping)

@@ -67,12 +67,20 @@ Next to plain UDP, the app can stream its RTP through a [Pinhole](https://github
 2. In the app's network card, switch to **Pinhole / iroh** and paste or scan the string.
 3. Start streaming — the phone punches your NAT, completes the encrypted handshake, and sends the same RTP datagrams end-to-end encrypted.
 
-The `pinhole/` module implements direct UDP, native iroh endpoint tickets/IDs,
+The `pinhole/` module implements direct UDP, authenticated direct TCP fallback, native iroh endpoint tickets/IDs,
 signed HTTP pkarr discovery, and authenticated iroh relay v1/v2 framing in Kotlin.
 The encrypted Pinhole session runs above those routes: triple-DH X25519,
 HKDF-SHA256, and AES-GCM with replay protection. Incoming RTP is connected to
 playback, handshake flights are retried, and validated direct paths can replace
 relay routes while the relay remains available for fallback. TURN is unsupported.
+
+TCP uses the existing pinned encrypted session and proves a fresh challenge on
+each stream before carrying application data. The dialer opens at most four
+streams; frames, queues, connect/proof/body/write deadlines and teardown are
+bounded. Healthy UDP remains preferred. The app reports direct UDP, direct TCP
+or relay when a route is validated. `enableTcp=false` opts out; the Android
+dialer opens outgoing streams and does not provide a general TCP listener or
+claim TCP simultaneous-open support.
 
 The dialer discovers public UDP mappings through STUN on the same socket used for audio
 and announces its host/public candidates inside the encrypted session, allowing the PC
@@ -130,10 +138,12 @@ protocol above them. An unchanged native iroh application endpoint needs its own
 compatible packet protocol engine; sharing a relay or endpoint ID does not change
 the application's session protocol.
 
-The repeatable C# ↔ Kotlin test matrix covers twelve cases: direct Pinhole, an IPv6-only
+The repeatable C# ↔ Kotlin test matrix covers seventeen cases: direct Pinhole, an IPv6-only
 LAN receiver ticket generated in Kotlin, router mapping, an edited first PACK token, lost
 PACK/HSCK flights, native IDs/tickets with direct and forced relay routes,
-relay-to-direct upgrade, and tampered discovery rejection. The mapping case verifies
+TCP-only IPv4/IPv6, TCP fallback when receiver UDP is disabled, healthy UDP preference,
+two real reference relays with a stable selected route, relay-to-direct upgrade,
+and tampered discovery rejection. The mapping case verifies
 that the .NET peer receives the authenticated candidate for the phone's actual audio
 socket port. It runs in CI.
 
@@ -151,6 +161,8 @@ complete Wi-Fi/cellular/background/audio matrix remains separate validation.
 
 `deviceTest` is a separate test APK containing the shipping Kotlin transport. It
 does not replace the installed voice app or request microphone/camera permission.
+The handoff test holds a temporary five-minute CPU wake lock; it does not validate
+background or suspend behavior.
 Start a .NET echo peer on the desktop's actual network:
 
 ```bash
@@ -173,6 +185,15 @@ encrypted handshake, checks 48 byte-exact echoes at sizes 1–1200, records retr
 and latency percentiles, and checks that close retires the connection. These are
 transport checks; audio, background/suspend, Wi-Fi handoff and VPN require their
 own recorded device scenarios.
+
+For a same-session network test, run the `encryptedConnectionSurvivesNetworkHandoffs`
+method with `networkSequence=wifi,cellular,wifi` or `vpn,wifi,vpn`. Each stage checks
+the active network and verifies sixteen encrypted echoes; `connect()` runs only
+once. The host must perform the requested transitions when `WAIT_HANDOFF` appears.
+The runner in `interop/physical-device.py` can coordinate Wi-Fi/LTE changes and,
+with explicit `--control-proton`, the already-configured Proton VPN buttons. It
+restores the original Wi-Fi/mobile-data settings and ends the VPN sequence connected.
+Keep its raw tickets and UI data local; publish only redacted metrics.
 
 The [2026-10-10 OPPO LTE report](docs/validation/2026-10-10-oppo-cellular.json)
 records passing automatic-routing and forced-relay cases on Android 16. Both

@@ -29,3 +29,7 @@ web/dist/
 # Local interop/manual-test capture artifacts
 capture-*.opus
 capture-*.adpcm
+
+# Python device-test runner bytecode
+__pycache__/
+*.pyc

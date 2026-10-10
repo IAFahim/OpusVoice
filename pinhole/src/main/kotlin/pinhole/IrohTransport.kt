@@ -4,6 +4,7 @@ import java.io.Closeable
 import java.io.IOException
 import java.net.DatagramPacket
 import java.net.DatagramSocket
+import java.net.Inet6Address
 import java.net.InetSocketAddress
 import java.net.URI
 import java.security.MessageDigest
@@ -27,9 +28,24 @@ import org.bouncycastle.crypto.params.Ed25519PrivateKeyParameters
 import org.bouncycastle.crypto.signers.Ed25519Signer
 
 sealed interface IrohPath {
-    data class Direct(val address: InetSocketAddress) : IrohPath
+    data class Direct(val address: InetSocketAddress) : IrohPath {
+        override fun equals(other: Any?): Boolean = other is Direct && sameScopedEndpoint(address, other.address)
+        override fun hashCode(): Int = scopedEndpointHash(address)
+    }
+    data class DirectTcp(val address: InetSocketAddress, val connectionId: Long) : IrohPath {
+        override fun equals(other: Any?): Boolean = other is DirectTcp && connectionId == other.connectionId &&
+            sameScopedEndpoint(address, other.address)
+        override fun hashCode(): Int = 31 * scopedEndpointHash(address) + connectionId.hashCode()
+    }
     data class Relay(val url: URI, val endpointId: String) : IrohPath
 }
+
+// InetSocketAddress equality does not preserve the receiving interface's IPv6
+// scope. Equal link-local bytes on two LAN interfaces are different routes.
+private fun sameScopedEndpoint(a: InetSocketAddress, b: InetSocketAddress): Boolean =
+    a == b && (a.address as? Inet6Address)?.scopeId == (b.address as? Inet6Address)?.scopeId
+private fun scopedEndpointHash(address: InetSocketAddress): Int =
+    31 * address.hashCode() + ((address.address as? Inet6Address)?.scopeId ?: 0)
 
 data class IrohDatagram(val path: IrohPath, val payload: ByteArray)
 
@@ -81,6 +97,7 @@ class IrohTransport(secretKeySeed: ByteArray? = null) : Closeable {
     private val scheduler = ScheduledThreadPoolExecutor(1) { task ->
         Thread(task, "iroh-relay-reconnect").apply { isDaemon = true }
     }.apply { removeOnCancelPolicy = true }
+    private val tcp = TcpTransport(scheduler, ::enqueue)
     private val receiver = thread(isDaemon = true, name = "iroh-udp-recv") {
         val buffer = ByteArray(65535)
         val packet = DatagramPacket(buffer, buffer.size)
@@ -117,8 +134,19 @@ class IrohTransport(secretKeySeed: ByteArray? = null) : Closeable {
                 require(payload.size in 1..65502)
                 relay(path.url).send(IrohEncoding.key(path.endpointId), payload)
             }
+            is IrohPath.DirectTcp -> tcp.send(path, payload)
         }
     }
+
+    internal fun dialTcp(address: InetSocketAddress): IrohPath.DirectTcp? = tcp.dial(address)
+    internal fun tcpReady(path: IrohPath.DirectTcp): Boolean = tcp.isReady(path)
+    internal fun tcpAuthenticated(path: IrohPath.DirectTcp): Boolean = tcp.isAuthenticated(path)
+    internal fun beginTcpProof(path: IrohPath.DirectTcp): Long? = tcp.beginProof(path)
+    internal fun confirmTcpProof(path: IrohPath.DirectTcp, nonce: Long): Boolean = tcp.confirmProof(path, nonce)
+    internal fun observeTcpChallenge(path: IrohPath.DirectTcp, nonce: Long) = tcp.observeChallenge(path, nonce)
+    internal fun compareTcpProofs(a: IrohPath.DirectTcp, b: IrohPath.DirectTcp): Int = tcp.compareProofs(a, b)
+    internal fun closeTcp(path: IrohPath.DirectTcp) = tcp.close(path)
+    internal fun tcpPaths(): List<IrohPath.DirectTcp> = tcp.paths()
 
     fun receive(timeoutMs: Long = 1000): IrohDatagram? {
         require(timeoutMs in 0..60_000)
@@ -170,6 +198,7 @@ class IrohTransport(secretKeySeed: ByteArray? = null) : Closeable {
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
         socket.close()
+        tcp.close()
         stunPending.values.forEach { it.ready.countDown() }
         synchronized(relays) { relays.values.forEach { it.close() }; relays.clear() }
         scheduler.shutdownNow()
