@@ -16,7 +16,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.concurrent.thread
 
 /**
- * Encrypted Pinhole session over direct UDP or native iroh relay transport.
+ * Encrypted Pinhole session over direct UDP/TCP or native iroh relay transport.
  * Accepts pinhole1 connection strings, native endpoint tickets, and endpoint IDs.
  * Native IDs/tickets require signed discovery advertising a Pinhole static-key binding.
  */
@@ -28,10 +28,14 @@ class PinholeDialer(
     private val relayOnly: Boolean = false,
     private val stunServers: List<InetSocketAddress>? = null,
     private val portMapping: PortMappingOptions = PortMappingOptions(),
+    private val enableTcp: Boolean = true,
+    private val tcpOnly: Boolean = false,
+    private val publishDirectAddresses: Boolean = true,
 ) : Closeable {
     var onConnected: ((InetSocketAddress) -> Unit)? = null
     var onClosed: ((String) -> Unit)? = null
     var onReceived: ((ByteArray) -> Unit)? = null
+    var onPathChanged: ((IrohPath) -> Unit)? = null
     var debug: Boolean = false
     var lastRttMs: Long = -1
         private set
@@ -57,8 +61,14 @@ class PinholeDialer(
     private var lastResolveNanos = 0L
     private var lastDirectProbeNanos = 0L
     private var lastDirectReceiveNanos = 0L
+    private var lastPathReceiveNanos = 0L
+    private var connectStartedNanos = 0L
+    private var lastTcpAttemptNanos = 0L
+    private var tcpCandidateCursor = 0
+    private val pendingPings = linkedMapOf<Pair<IrohPath, ULong>, Long>()
     private var nativeDiscovery = false
     private var remoteToken = 0
+    private var remoteTokenAuthenticated = false
     private var recvThread: Thread? = null
     private var punchThread: Thread? = null
     private var candidateThread: Thread? = null
@@ -93,7 +103,9 @@ class PinholeDialer(
         check(started.compareAndSet(false, true)) { "connect may only be called once" }
         check(!closed.get()) { "dialer is closed" }
         require(connectTimeoutMs in 1..120_000)
-        val deadline = System.nanoTime() + connectTimeoutMs * 1_000_000
+        require(!tcpOnly || enableTcp && !relayOnly) { "TCP-only requires TCP enabled and relay-only disabled" }
+        connectStartedNanos = System.nanoTime()
+        val deadline = connectStartedNanos + connectTimeoutMs * 1_000_000
         try {
             val native = IrohAddress.tryParse(ticket)
             cs = if (native == null) ConnectionString.parse(ticket) else {
@@ -108,15 +120,16 @@ class PinholeDialer(
             check(!closed.get()) { "dialer was closed while resolving" }
             lastReceiveNanos = System.nanoTime()
             recvThread = thread(isDaemon = true, name = "pinhole-recv") { receiveLoop() }
-            if (!relayOnly && portMapping.enabled) {
+            if (!relayOnly && publishDirectAddresses && portMapping.enabled) {
                 portMapper = RouterPortMapper(transport.localPort, portMapping) { endpoint ->
                     if (!closed.get()) mappedEndpoint = endpoint
                 }
             }
-            if (!relayOnly) candidateThread = thread(isDaemon = true, name = "pinhole-candidates") { discoverCandidates() }
+            if (!relayOnly && publishDirectAddresses) candidateThread = thread(isDaemon = true, name = "pinhole-candidates") { discoverCandidates() }
             punchThread = thread(isDaemon = true, name = "pinhole-maintenance") {
                 try {
                     while (!closed.get()) {
+                        raceTcp(System.nanoTime())
                         if (!established) {
                             if (System.nanoTime() >= deadline) {
                                 finish("connect timeout after " + connectTimeoutMs + "ms")
@@ -124,7 +137,7 @@ class PinholeDialer(
                             }
                             if (handshakeReady) {
                                 peerPath?.let { sendHandshakeAck(it) }
-                            } else paths.forEach { sendRaw(it, puncFrame) }
+                            } else paths.filter { !tcpOnly || it !is IrohPath.Direct }.forEach { sendRaw(it, puncFrame) }
                         } else maintain()
                         Thread.sleep(200)
                     }
@@ -182,7 +195,7 @@ class PinholeDialer(
     }
 
     private fun handleFrame(frame: ByteArray, from: IrohPath) {
-        if (relayOnly && from is IrohPath.Direct) return
+        if (relayOnly && from !is IrohPath.Relay || tcpOnly && from !is IrohPath.DirectTcp) return
         if (frame.size < PREFIX || readULongLe(frame, 1) != cs.peerId) return
         if (from is IrohPath.Relay) {
             val endpoint = cs.endpointKey ?: cs.candidates.firstOrNull { it.kind == CandidateKind.IrohRelay }?.relayKey ?: return
@@ -192,16 +205,49 @@ class PinholeDialer(
             FRAME_PACK -> handlePack(frame, from)
             FRAME_PUNC -> handlePunc(frame, from)
             else -> {
-                if (!handshakeReady || readIntLe(frame, 9) != remoteToken) return
+                if (!handshakeReady || remoteTokenAuthenticated && readIntLe(frame, 9) != remoteToken) return
                 val plaintext = recvSealer?.open(frame, frame.size) ?: return
+                val pingSentAt = if (frame[0].toInt() and 255 == FRAME_PONG && plaintext.size >= 8)
+                    synchronized(pendingPings) { pendingPings.remove(from to readULongLe(plaintext, 0)) } else null
+                // PACK confirms the keys, while sealed AAD authenticates the token.
+                // Correct an edited first PACK only after the genuine frame opens.
+                remoteToken = readIntLe(frame, 9)
+                remoteTokenAuthenticated = true
+                answerPunc?.let { writeIntLe(it, 9, remoteToken) }
+                val type = frame[0].toInt() and 255
+                if (from is IrohPath.DirectTcp && !transport.tcpAuthenticated(from)) {
+                    when (type) {
+                        FRAME_PING -> if (plaintext.size >= 8) {
+                            transport.observeTcpChallenge(from, readULongLe(plaintext, 0).toLong())
+                            sendTcpProof(from)
+                            sendSealed(FRAME_PONG, plaintext.copyOf(8), from)
+                        }
+                        FRAME_PONG -> {
+                            if (plaintext.size < 8 || !transport.confirmTcpProof(from, readULongLe(plaintext, 0).toLong())) return
+                        }
+                    }
+                    if (!transport.tcpAuthenticated(from)) return
+                }
                 val now = System.nanoTime()
                 lastReceiveNanos = now
                 if (from is IrohPath.Direct) lastDirectReceiveNanos = now
                 // Prefer a validated direct path while it is alive. A late relay reply
                 // must not immediately switch a healthy direct session back to relay.
-                if (from is IrohPath.Direct || peerPath !is IrohPath.Direct ||
-                    now - lastDirectReceiveNanos > 5_000_000_000L) peerPath = from
-                val type = frame[0].toInt() and 255
+                val healthyUdp = peerPath is IrohPath.Direct && now - lastDirectReceiveNanos <= 5_000_000_000L
+                val current = peerPath
+                if (current == from) lastPathReceiveNanos = now
+                when (from) {
+                    is IrohPath.Direct -> adoptPath(from)
+                    is IrohPath.DirectTcp -> if (!healthyUdp) {
+                        if (current is IrohPath.DirectTcp && current != from && transport.tcpReady(current) &&
+                            now - lastPathReceiveNanos <= 5_000_000_000L &&
+                            transport.compareTcpProofs(from, current) >= 0) transport.closeTcp(from)
+                        else adoptPath(from)
+                    }
+                    is IrohPath.Relay -> if (!healthyUdp &&
+                        (current !is IrohPath.DirectTcp || !transport.tcpReady(current) || now - lastPathReceiveNanos > 5_000_000_000L) &&
+                        (current !is IrohPath.Relay || current == from || now - lastPathReceiveNanos > 5_000_000_000L)) adoptPath(from)
+                }
                 if (!established && type != FRAME_BYE) {
                     established = true
                     settled.countDown()
@@ -210,8 +256,8 @@ class PinholeDialer(
                 when (type) {
                     FRAME_DATA -> onReceived?.invoke(plaintext)
                     FRAME_PING -> if (plaintext.size >= 8) sendSealed(FRAME_PONG, plaintext.copyOf(8), from)
-                    FRAME_PONG -> if (plaintext.size >= 8) {
-                        lastRttMs = maxOf(0, (System.nanoTime() - readULongLe(plaintext, 0).toLong()) / 1_000_000)
+                    FRAME_PONG -> if (pingSentAt != null) {
+                        lastRttMs = maxOf(0, (System.nanoTime() - pingSentAt) / 1_000_000)
                     }
                     FRAME_ANNOUNCE -> try {
                         val fresh = ConnectionString.readAnnouncement(plaintext)
@@ -268,12 +314,51 @@ class PinholeDialer(
         if (!handshakeReady || frame.size != PREFIX + 64 || readIntLe(frame, 9) != remoteToken ||
             !MessageDigest.isEqual(frame.copyOfRange(PREFIX, PREFIX + 64), accepted.copyOfRange(17, 81))) return
         answerPunc?.let { sendRaw(from, it) }
-        try { sendSealed(FRAME_PING, uLongLe(System.nanoTime().toULong()), from) } catch (_: IOException) {}
+        if (from is IrohPath.DirectTcp) sendTcpProof(from)
+        else try { sendSealed(FRAME_PING, uLongLe(System.nanoTime().toULong()), from) } catch (_: IOException) {}
     }
 
     private fun sendHandshakeAck(path: IrohPath) {
         hsckFrame?.let { sendRaw(path, it) }
-        try { sendSealed(FRAME_PING, uLongLe(System.nanoTime().toULong()), path) } catch (_: IOException) {}
+        if (path is IrohPath.DirectTcp) sendTcpProof(path)
+        else try { sendSealed(FRAME_PING, uLongLe(System.nanoTime().toULong()), path) } catch (_: IOException) {}
+    }
+
+    private fun sendTcpProof(path: IrohPath.DirectTcp) {
+        if (!handshakeReady) return
+        val challenge = transport.beginTcpProof(path) ?: return
+        try { sendSealed(FRAME_PING, uLongLe(challenge.toULong()), path) }
+        catch (_: IOException) { transport.closeTcp(path) }
+    }
+
+    private fun adoptPath(path: IrohPath) {
+        lastPathReceiveNanos = System.nanoTime()
+        if (peerPath == path) return
+        peerPath = path
+        onPathChanged?.invoke(path)
+    }
+
+    /** Bounded fallback on advertised endpoints only; never replace healthy UDP. */
+    private fun raceTcp(now: Long) {
+        if (!enableTcp || relayOnly || !tcpOnly && now - connectStartedNanos < 1_200_000_000L) return
+        if (established && peerPath is IrohPath.Direct && now - lastDirectReceiveNanos <= 5_000_000_000L) {
+            transport.tcpPaths().forEach { transport.closeTcp(it) }
+            return
+        }
+        val targets = paths.filterIsInstance<IrohPath.Direct>().distinct().take(8).map { it.address }
+        if (targets.isNotEmpty() && (lastTcpAttemptNanos == 0L || now - lastTcpAttemptNanos >= 5_000_000_000L)) {
+            lastTcpAttemptNanos = now
+            repeat(minOf(4, targets.size)) {
+                transport.dialTcp(targets[tcpCandidateCursor % targets.size])
+                tcpCandidateCursor++
+            }
+        }
+        transport.tcpPaths().forEach {
+            if (transport.tcpReady(it) && !transport.tcpAuthenticated(it)) {
+                sendRaw(it, puncFrame)
+                sendTcpProof(it)
+            }
+        }
     }
 
     private fun sendRaw(path: IrohPath, frame: ByteArray): Boolean = try {
@@ -284,7 +369,15 @@ class PinholeDialer(
         val sealer = sendSealer ?: throw IllegalStateException("handshake not ready")
         val frame = prefix(type, myToken, PREFIX + 24 + body.size)
         sealer.seal(frame, PREFIX, frame.copyOf(PREFIX), body)
-        if (!transport.sendTo(path, frame)) throw IOException("iroh relay is reconnecting or its queue is full")
+        val pingKey = if (type == FRAME_PING && body.size >= 8) path to readULongLe(body, 0) else null
+        if (pingKey != null) synchronized(pendingPings) {
+            while (pendingPings.size >= 8) pendingPings.remove(pendingPings.keys.first())
+            pendingPings[pingKey] = System.nanoTime()
+        }
+        if (!transport.sendTo(path, frame)) {
+            if (pingKey != null) synchronized(pendingPings) { pendingPings.remove(pingKey) }
+            throw IOException("transport is reconnecting or its queue is full")
+        }
         lastSendNanos = System.nanoTime()
     }
 
@@ -297,7 +390,7 @@ class PinholeDialer(
     private fun maintain() {
         val now = System.nanoTime()
         if (!relayOnly) announceCandidates(now)
-        if (!relayOnly && peerPath is IrohPath.Relay && now - lastDirectProbeNanos >= 1_000_000_000L) {
+        if (!relayOnly && !tcpOnly && peerPath !is IrohPath.Direct && now - lastDirectProbeNanos >= 1_000_000_000L) {
             lastDirectProbeNanos = now
             if (debug) System.err.println("pinhole: probing direct candidates: " + paths.filterIsInstance<IrohPath.Direct>())
             paths.filterIsInstance<IrohPath.Direct>().forEach {
@@ -330,7 +423,7 @@ class PinholeDialer(
                 val key = it.relayKey ?: return@flatMap emptyList()
                 require(derivePeerId(key) == peer.peerId) { "iroh relay identity does not match the Pinhole peer ID" }
                 require(peer.endpointKey == null || MessageDigest.isEqual(key, peer.endpointKey))
-                listOf(IrohPath.Relay(it.relayUrl ?: return@flatMap emptyList(), IrohEncoding.hex(key)))
+                if (tcpOnly) emptyList() else listOf(IrohPath.Relay(it.relayUrl ?: return@flatMap emptyList(), IrohEncoding.hex(key)))
             }
             CandidateKind.Relay -> emptyList() // TURN uses a different transport.
         }
@@ -460,6 +553,7 @@ class PinholeDialer(
 
     private fun displayAddress(path: IrohPath): InetSocketAddress = when (path) {
         is IrohPath.Direct -> path.address
+        is IrohPath.DirectTcp -> path.address
         is IrohPath.Relay -> InetSocketAddress.createUnresolved(path.url.host,
             if (path.url.port > 0) path.url.port else if (path.url.scheme == "https") 443 else 80)
     }

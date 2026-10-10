@@ -19,9 +19,15 @@ var configurations = new (string Name, string[] Args, string Path, string Result
     ("pinhole-lan-ipv6-ticket", ["--ipv6"], "direct", "accept"),
     ("pinhole-router-mapping", ["--fake-pcp"], "direct", "accept"),
     ("pinhole-lost-PACK-and-HSCK", ["--drop-handshake"], "direct", "accept"),
+    ("pinhole-edited-PACK-token", ["--edit-pack-token"], "direct", "accept"),
+    ("pinhole-tcp-ipv4", ["--tcp"], "tcp", "accept"),
+    ("pinhole-tcp-ipv6", ["--tcp", "--ipv6"], "tcp", "accept"),
+    ("pinhole-tcp-udp-disabled", ["--tcp", "--disable-direct-udp"], "tcp-fallback", "accept"),
+    ("pinhole-udp-preferred-with-tcp", ["--tcp"], "direct", "accept"),
     ("iroh-ticket-direct", ["--iroh"], "direct", "accept"),
     ("iroh-id-direct", ["--iroh", "--id"], "direct", "accept"),
     ("pinhole-relay-only", ["--relay-only", "--relay-bin", relayBin], "relay", "accept"),
+    ("pinhole-multiple-relays", ["--relay-only", "--multi-relay", "--relay-bin", relayBin], "relay", "accept"),
     ("iroh-id-relay-only", ["--iroh", "--id", "--relay-only", "--relay-bin", relayBin], "relay", "accept"),
     ("iroh-ticket-relay-only", ["--iroh", "--relay-only", "--relay-bin", relayBin], "relay", "accept"),
     ("iroh-relay-to-direct-upgrade", ["--iroh", "--id", "--relay-only", "--relay-bin", relayBin], "upgrade", "accept"),
@@ -76,8 +82,12 @@ try
             throw new IOException("handshake loss fixture did not drop both flights");
         if (peer.Name == "pinhole-router-mapping" && !peer.Log.Any(line => line.StartsWith("MAPPING_VALIDATED ")))
             throw new IOException("the .NET peer did not receive the authenticated mapping candidate for the audio port");
+        if (peer.Name.Contains("edited-") && !peer.Log.Contains("EDITED=PACK-TOKEN"))
+            throw new IOException("token fixture did not edit the initial PACK");
+        if (peer.Name.StartsWith("pinhole-tcp-") && !peer.Log.Contains("TRANSPORT=Tcp"))
+            throw new IOException("the .NET peer did not select authenticated direct TCP");
     }
-    Console.WriteLine("PASS: all eleven C# ↔ Kotlin connection cases.");
+    Console.WriteLine($"PASS: all {configurations.Length} C# ↔ Kotlin connection cases.");
     return 0;
 }
 finally

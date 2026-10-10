@@ -47,7 +47,7 @@ class PinholeInteropTest {
                         peer.candidates.single().address.port, peer.candidates.map { it.address.address }, attributes)).ticket
                 } else parts[1]
                 val dialer = PinholeDialer(ticket, connectTimeoutMs = 20_000, discoveryUrl = URI(parts[2]),
-                    relayOnly = parts[3] == "relay", stunServers = emptyList(),
+                    relayOnly = parts[3] == "relay", tcpOnly = parts[3] == "tcp", stunServers = emptyList(),
                     portMapping = if (gateway == null) PortMappingOptions(enabled = false) else PortMappingOptions(gateways = { listOf(gateway) }))
                 dialer.debug = parts[3] == "upgrade"
                 try {
@@ -56,7 +56,11 @@ class PinholeInteropTest {
                         assertTrue(error.message.orEmpty().contains("signature"), "expected signature rejection: " + error.message)
                         assertTrue(!dialer.isConnected)
                     } else {
-                        roundTrip(dialer)
+                        val firstPath = roundTrip(dialer)
+                        if (parts[0] == "pinhole-multiple-relays") {
+                            Thread.sleep(1000) // late replies on the other live relay cannot replace this one
+                            assertEquals(firstPath, dialer.connectedPath, "late relay proof replaced a healthy selected route")
+                        }
                         if (gateway != null) {
                             val confirmed = CountDownLatch(1)
                             dialer.onReceived = { if (it.contentEquals("mapping-confirmed".toByteArray())) confirmed.countDown() }
@@ -72,6 +76,7 @@ class PinholeInteropTest {
                             while (dialer.connectedPath !is IrohPath.Direct && System.nanoTime() < deadline) Thread.sleep(20)
                         }
                         assertEquals(parts[3] == "relay", dialer.connectedPath is IrohPath.Relay, "unexpected connection path")
+                        assertEquals(parts[3].startsWith("tcp"), dialer.connectedPath is IrohPath.DirectTcp, "unexpected TCP transport")
                     }
                 } finally { dialer.close() }
             }
@@ -90,12 +95,13 @@ class PinholeInteropTest {
         try { roundTrip(dialer) } finally { dialer.close() }
     }
 
-    private fun roundTrip(dialer: PinholeDialer) {
+    private fun roundTrip(dialer: PinholeDialer): IrohPath {
         val echoes = ConcurrentLinkedQueue<ByteArray>()
         val echoed = CountDownLatch(12)
         val connected = CountDownLatch(1)
+        var firstPath: IrohPath? = null
         run {
-            dialer.onConnected = { connected.countDown() }
+            dialer.onConnected = { firstPath = dialer.connectedPath; connected.countDown() }
             dialer.onReceived = { datagram ->
                 echoes.add(datagram)
                 echoed.countDown()
@@ -123,5 +129,6 @@ class PinholeInteropTest {
                 sent.forEachIndexed { i, b -> assertEquals(b, back[i]) }
             }
         }
+        return assertNotNull(firstPath)
     }
 }

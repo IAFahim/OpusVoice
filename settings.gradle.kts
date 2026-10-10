@@ -26,3 +26,4 @@ rootProject.name = "OpusVoice"
 
 include(":app")
 include(":pinhole")
+include(":deviceTest")

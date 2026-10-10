@@ -1,0 +1,73 @@
+{
+  "dateUtc": "2026-10-10",
+  "device": {
+    "manufacturer": "OPPO",
+    "model": "CPH2819",
+    "android": "16",
+    "api": 36,
+    "abi": "arm64-v8a"
+  },
+  "kotlinCommit": "358a25ef3e283b88ad08baa41e7d65b098556c0f",
+  "coreCommit": "76b593dce53cb1d763420fc629a7899c546b0176",
+  "artifactsSha256": {
+    "deviceTest/build/outputs/apk/debug/deviceTest-debug.apk": "852681082f4d0ca4596b4c030c54670e3127572a35f347c7e9400628aafce44c",
+    "deviceTest/build/outputs/apk/androidTest/debug/deviceTest-debug-androidTest.apk": "35286fbd7b81b0fa469b2d836fb3d499e854d4c04de5635a874730a7dd6b1f9b",
+    "interop/EchoPeer/bin/Debug/net10.0/Pinhole.dll": "5430dcc1c97cbe6082c99cba993b39ca0c6097d149cbae81025cf1508f6c6499"
+  },
+  "sourceSha256": {
+    "pinhole/src/main/kotlin/pinhole/PinholeDialer.kt": "3291858514d1dc44f4d0ac1dbce9bf67a595b3d659b9bc643ab0802953f572f9",
+    "deviceTest/src/androidTest/java/org/pinhole/devicetest/PhysicalPeerTest.kt": "7a63cf2a200a78eb9351785b2f41aa048f321debdd543a5162ed96556bef509b"
+  },
+  "test": "PhysicalPeerTest.encryptedConnectionSurvivesNetworkHandoffs",
+  "payloadSizeBytes": [60, 1200],
+  "retryIntervalMs": 1000,
+  "firstEchoDefinition": "Latency of the first encrypted echo request after Android reports the requested active network. Retries are included; network transition time and the initial connect are excluded.",
+  "cases": [
+    {
+      "name": "Wi-Fi to cellular to Wi-Fi",
+      "passed": true,
+      "durationMs": 22306,
+      "connectionAttempts": 1,
+      "pathChanges": 9,
+      "echoes": 48,
+      "attempts": 56,
+      "stages": [
+        {"network": "wifi", "vpn": false, "path": "direct UDP", "echoes": 16, "attempts": 16, "firstEchoMs": 240, "rttMaxMs": 240, "stageMs": 2920},
+        {"network": "cellular", "vpn": false, "path": "iroh relay", "relayHost": "aps1-1.relay.n0.iroh.link", "echoes": 16, "attempts": 24, "firstEchoMs": 8254, "rttMaxMs": 8254, "stageMs": 12744},
+        {"network": "wifi", "vpn": false, "path": "direct UDP", "echoes": 16, "attempts": 16, "firstEchoMs": 228, "rttMaxMs": 228, "stageMs": 2554}
+      ]
+    },
+    {
+      "name": "Proton VPN disconnect and reconnect",
+      "passed": true,
+      "durationMs": 33631,
+      "relayOnly": true,
+      "connectionAttempts": 1,
+      "pathChanges": 0,
+      "echoes": 48,
+      "attempts": 54,
+      "relayHost": "aps1-1.relay.n0.iroh.link",
+      "stages": [
+        {"network": "vpn", "path": "iroh relay", "echoes": 16, "attempts": 16, "firstEchoMs": 479, "rttMaxMs": 565, "stageMs": 9688},
+        {"network": "wifi", "vpn": false, "path": "iroh relay", "echoes": 16, "attempts": 18, "firstEchoMs": 2137, "rttMaxMs": 2137, "stageMs": 5739},
+        {"network": "vpn", "path": "iroh relay", "echoes": 16, "attempts": 20, "firstEchoMs": 3351, "rttMaxMs": 3351, "stageMs": 11851}
+      ]
+    }
+  ],
+  "assertions": [
+    "requested active Internet network before and after each stage",
+    "Wi-Fi and cellular stages exclude VPN routing",
+    "one connect call and the original encrypted session remains open",
+    "48 byte-exact encrypted echoes per case",
+    "close retires the session"
+  ],
+  "deviceState": "Original Wi-Fi and mobile-data settings restored; Proton VPN connected again.",
+  "scope": "Transport test using a separate APK and a bounded five-minute CPU wake lock. No voice-app replacement, microphone or camera access.",
+  "notValidated": [
+    "carrier-direct UDP or TCP",
+    "background or suspend recovery",
+    "voice encode/playback",
+    "other phones, operating systems, carriers or VPN implementations"
+  ],
+  "redaction": "No phone serial, tickets, endpoint identities, subscriber IDs, Wi-Fi names, UI captures or local/public IP addresses retained in this report."
+}

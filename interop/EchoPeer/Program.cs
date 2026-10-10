@@ -13,22 +13,41 @@ bool native = args.Contains("--iroh");
 bool dropHandshake = args.Contains("--drop-handshake");
 bool ipv6 = args.Contains("--ipv6");
 using var mappingGateway = args.Contains("--fake-pcp") ? new MappingGateway() : null;
+bool editPackToken = args.Contains("--edit-pack-token");
+bool physicalNetwork = args.Contains("--physical-network");
+bool tcp = args.Contains("--tcp");
 using var referenceRelay = Value("--relay-bin") is { } binary ? await ReferenceRelay.StartAsync(binary) : null;
+using var secondRelay = args.Contains("--multi-relay") && Value("--relay-bin") is { } secondBinary
+    ? await ReferenceRelay.StartAsync(secondBinary) : null;
 Uri? relayUrl = referenceRelay?.Url ?? (Value("--relay-url") is { } relay ? new Uri(relay) : null);
+Uri[] relayUrls = new[] { relayUrl, secondRelay?.Url }.OfType<Uri>().ToArray();
 if (relayOnly && relayUrl is null) throw new ArgumentException("--relay-only requires --relay-url");
 using var directory = native ? new PkarrDirectory(args.Contains("--tamper")) : null;
 await using var node = await PinholeNode.BindAsync(new PinholeOptions
 {
-    Bind = new IPEndPoint(ipv6 ? IPAddress.IPv6Loopback : IPAddress.Loopback, 0), StunServers = [],
-    IrohRelayUrls = relayUrl is null ? [] : [relayUrl],
-    EnableLanDiscovery = false, // test peers stay on the local fixture network
+    Bind = new IPEndPoint(ipv6 ? physicalNetwork ? IPAddress.IPv6Any : IPAddress.IPv6Loopback
+        : physicalNetwork ? IPAddress.Any : IPAddress.Loopback, 0),
+    StunServers = physicalNetwork ? null : [],
+    IrohRelayUrls = relayUrls.Length == 0 ? physicalNetwork ? null : [] : relayUrls,
+    EnableLanDiscovery = false,
+    EnableTcpTransport = tcp,
+    EnableDirectUdp = !args.Contains("--disable-direct-udp"),
     EnableNetworkWatch = false, EnablePortMapping = false, EnablePmtud = false,
     ReceiveBufferCapacity = 256, PublishIrohAddress = native,
     PublishDirectIrohAddresses = !relayOnly,
     IrohDiscoveryUrl = directory?.Url ?? new Uri("https://dns.iroh.link/pkarr"),
 });
-using var proxy = dropHandshake ? new HandshakeLossProxy(new IPEndPoint(IPAddress.Loopback, node.LocalPort)) : null;
+using var proxy = dropHandshake || editPackToken
+    ? new HandshakeLossProxy(new IPEndPoint(IPAddress.Loopback, node.LocalPort), dropHandshake, editPackToken) : null;
 var code = ConnectionString.Parse(node.ConnectionString);
+if (Value("--advertise-loopback-port") is { } forwardedPort)
+{
+    int port = int.Parse(forwardedPort);
+    if (port is < 1 or > 65535) throw new ArgumentOutOfRangeException(nameof(forwardedPort));
+    code = new ConnectionString(code.PeerId,
+        [new PinholeCandidate(CandidateKind.Direct, new IPEndPoint(IPAddress.Loopback, port))],
+        code.NatHint, code.StaticKey, code.EndpointKey);
+}
 if (ipv6) code = new ConnectionString(code.PeerId,
     [new PinholeCandidate(CandidateKind.Direct, new IPEndPoint(IPAddress.IPv6Loopback, node.LocalPort))],
     code.NatHint, code.StaticKey, code.EndpointKey);
@@ -46,13 +65,15 @@ if (native)
 }
 if (mappingGateway is not null) Console.WriteLine("MAPPING_GATEWAY=" + mappingGateway.Address);
 Console.WriteLine("TICKET=" + ticket);
-Console.WriteLine("EXPECTED_PATH=" + (relayOnly ? "relay" : "direct"));
+Console.WriteLine("TCP_LISTENING_PORT=" + node.TcpListeningPort);
+Console.WriteLine("EXPECTED_PATH=" + (relayOnly ? "relay" : physicalNetwork ? "direct-or-relay" : "direct"));
 var connections = new List<PinholeConnection>();
 while (true)
 {
     var conn = await node.AcceptAsync();
     connections.Add(conn);
     Console.WriteLine("CONNECTED path=" + conn.Path.Kind + " encrypted=" + conn.IsEncrypted);
+    Console.WriteLine("TRANSPORT=" + conn.Path.Transport);
     _ = EchoAsync(conn, node, mappingGateway);
 }
 static async Task EchoAsync(PinholeConnection conn, PinholeNode node, MappingGateway? mapping)
@@ -177,21 +198,24 @@ sealed class HandshakeLossProxy : IDisposable
     private readonly UdpClient _udp = new(new IPEndPoint(IPAddress.Loopback, 0));
     private readonly CancellationTokenSource _stop = new();
     public IPEndPoint Address => (IPEndPoint)_udp.Client.LocalEndPoint!;
-    public HandshakeLossProxy(IPEndPoint server) => _ = RunAsync(server);
-    private async Task RunAsync(IPEndPoint server)
+    public HandshakeLossProxy(IPEndPoint server, bool dropHandshake, bool editPackToken) => _ = RunAsync(server, dropHandshake, editPackToken);
+    private async Task RunAsync(IPEndPoint server, bool dropHandshake, bool editPackToken)
     {
         IPEndPoint? client = null;
         bool droppedPack = false, droppedHsck = false;
+        bool editedPack = false;
         try
         {
             while (!_stop.IsCancellationRequested)
             {
                 var packet = await _udp.ReceiveAsync(_stop.Token);
                 bool response = packet.RemoteEndPoint.Equals(server);
-                if (packet.Buffer.Length > 0 && packet.Buffer[0] == 0x51 && !droppedPack)
+                if (dropHandshake && packet.Buffer.Length > 0 && packet.Buffer[0] == 0x51 && !droppedPack)
                 { droppedPack = true; Console.WriteLine("DROPPED=PACK"); continue; }
-                if (packet.Buffer.Length > 0 && packet.Buffer[0] == 0x57 && !droppedHsck)
+                if (dropHandshake && packet.Buffer.Length > 0 && packet.Buffer[0] == 0x57 && !droppedHsck)
                 { droppedHsck = true; Console.WriteLine("DROPPED=HSCK"); continue; }
+                if (editPackToken && response && packet.Buffer.Length == 97 && packet.Buffer[0] == 0x51 && !editedPack)
+                { editedPack = true; packet.Buffer[13] ^= 1; Console.WriteLine("EDITED=PACK-TOKEN"); }
                 if (!response) client = packet.RemoteEndPoint;
                 var target = response ? client : server;
                 if (target is not null) await _udp.SendAsync(packet.Buffer, target, _stop.Token);

@@ -67,12 +67,20 @@ Next to plain UDP, the app can stream its RTP through a [Pinhole](https://github
 2. In the app's network card, switch to **Pinhole / iroh** and paste or scan the string.
 3. Start streaming — the phone punches your NAT, completes the encrypted handshake, and sends the same RTP datagrams end-to-end encrypted.
 
-The `pinhole/` module implements direct UDP, native iroh endpoint tickets/IDs,
+The `pinhole/` module implements direct UDP, authenticated direct TCP fallback, native iroh endpoint tickets/IDs,
 signed HTTP pkarr discovery, and authenticated iroh relay v1/v2 framing in Kotlin.
 The encrypted Pinhole session runs above those routes: triple-DH X25519,
 HKDF-SHA256, and AES-GCM with replay protection. Incoming RTP is connected to
 playback, handshake flights are retried, and validated direct paths can replace
 relay routes while the relay remains available for fallback. TURN is unsupported.
+
+TCP uses the existing pinned encrypted session and proves a fresh challenge on
+each stream before carrying application data. The dialer opens at most four
+streams; frames, queues, connect/proof/body/write deadlines and teardown are
+bounded. Healthy UDP remains preferred. The app reports direct UDP, direct TCP
+or relay when a route is validated. `enableTcp=false` opts out; the Android
+dialer opens outgoing streams and does not provide a general TCP listener or
+claim TCP simultaneous-open support.
 
 The dialer discovers public UDP mappings through STUN on the same socket used for audio
 and announces its host/public candidates inside the encrypted session, allowing the PC
@@ -130,10 +138,12 @@ protocol above them. An unchanged native iroh application endpoint needs its own
 compatible packet protocol engine; sharing a relay or endpoint ID does not change
 the application's session protocol.
 
-The repeatable C# ↔ Kotlin test matrix covers eleven cases: direct Pinhole, an IPv6-only
-LAN receiver ticket generated in Kotlin, router mapping, lost
+The repeatable C# ↔ Kotlin test matrix covers seventeen cases: direct Pinhole, an IPv6-only
+LAN receiver ticket generated in Kotlin, router mapping, an edited first PACK token, lost
 PACK/HSCK flights, native IDs/tickets with direct and forced relay routes,
-relay-to-direct upgrade, and tampered discovery rejection. The mapping case verifies
+TCP-only IPv4/IPv6, TCP fallback when receiver UDP is disabled, healthy UDP preference,
+two real reference relays with a stable selected route, relay-to-direct upgrade,
+and tampered discovery rejection. The mapping case verifies
 that the .NET peer receives the authenticated candidate for the phone's actual audio
 socket port. It runs in CI.
 
@@ -145,4 +155,53 @@ IROH_RELAY_BIN=/path/to/iroh-relay dotnet run --project interop/InteropRunner \
 ```
 
 These network interop tests run on the JVM. A physical Android phone's
-Wi-Fi/cellular/background/audio matrix has not been validated by this change.
+complete Wi-Fi/cellular/background/audio matrix remains separate validation.
+
+### Physical device transport validation
+
+`deviceTest` is a separate test APK containing the shipping Kotlin transport. It
+does not replace the installed voice app or request microphone/camera permission.
+The handoff test holds a temporary five-minute CPU wake lock; it does not validate
+background or suspend behavior.
+Start a .NET echo peer on the desktop's actual network:
+
+```bash
+dotnet run --project interop/EchoPeer -p:PinholeRoot=/path/to/Pinhole.Net -- --physical-network
+```
+
+With an authorized Android phone on cellular and Wi-Fi off, supply its printed
+ticket to the instrumented test. Keep tickets in local test logs; they advertise
+the peer's addresses and public identity.
+
+```bash
+./gradlew :deviceTest:connectedDebugAndroidTest \
+  -Pandroid.testInstrumentationRunnerArguments.pinholeTicket="$PINHOLE_TICKET" \
+  -Pandroid.testInstrumentationRunnerArguments.requireCellular=true
+```
+
+Add `-Pandroid.testInstrumentationRunnerArguments.relayOnly=true` to measure a
+forced relay separately. The test verifies the active network, completes the
+encrypted handshake, checks 48 byte-exact echoes at sizes 1–1200, records retries
+and latency percentiles, and checks that close retires the connection. These are
+transport checks; audio and background/suspend require their own recorded device scenarios.
+
+For a same-session network test, run the `encryptedConnectionSurvivesNetworkHandoffs`
+method with `networkSequence=wifi,cellular,wifi` or `vpn,wifi,vpn`. Each stage checks
+the active network and verifies sixteen encrypted echoes; `connect()` runs only
+once. The host must perform the requested transitions when `WAIT_HANDOFF` appears.
+The runner in `interop/physical-device.py` can coordinate Wi-Fi/LTE changes and,
+with explicit `--control-proton`, the already-configured Proton VPN buttons. It
+restores the original Wi-Fi/mobile-data settings and ends the VPN sequence connected.
+Keep its raw tickets and UI data local; publish only redacted metrics.
+
+The [2026-10-10 OPPO LTE report](docs/validation/2026-10-10-oppo-cellular.json)
+records passing automatic-routing and forced-relay cases on Android 16. Both
+used the Singapore iroh relay and returned all 48 datagrams without retries.
+The report includes APK/core assembly hashes and states the untested scenarios.
+
+The [OPPO handoff report](docs/validation/2026-10-10-oppo-handoffs.json) records
+Wi-Fi → LTE → Wi-Fi and Proton VPN → Wi-Fi → Proton VPN passes. Each retained
+one encrypted session and returned all 48 echoes. The first echo after Android
+reported LTE arrived in 8.25 seconds; VPN disconnect/reconnect took 2.14/3.35
+seconds by the same measure. The report pins the tested source and APK/assembly
+hashes; these are foreground transport results on one phone.

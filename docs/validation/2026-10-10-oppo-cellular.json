@@ -1,0 +1,85 @@
+{
+  "dateUtc": "2026-10-10",
+  "device": {
+    "manufacturer": "OPPO",
+    "model": "CPH2819",
+    "android": "16",
+    "api": 36,
+    "abi": "arm64-v8a"
+  },
+  "network": {
+    "requiredTransport": "cellular",
+    "wifiActive": false,
+    "vpnActive": false,
+    "carrierName": "not collected"
+  },
+  "coreCommit": "ef23281c01424214d6a624ccfc871db2f3ec4d45",
+  "kotlinBaseCommit": "3c4d7ce",
+  "artifacts": {
+    "deviceTest/build/outputs/apk/debug/deviceTest-debug.apk": "5b476ea0e1f4f903f201ff81861a4dea226e5a902576092fa5071508c076d425",
+    "deviceTest/build/outputs/apk/androidTest/debug/deviceTest-debug-androidTest.apk": "3df075fe3ec252ae7b6b1ffa082232ed07d09ef0bde18d9a40e911caa6fa0455",
+    "interop/EchoPeer/bin/Debug/net10.0/Pinhole.dll": "4fdfbafe1e30580c9f51c3f263ba6451e37bf2aef593197b68bb8d4ee729d25d"
+  },
+  "sourceSha256": {
+    "pinhole/src/main/kotlin/pinhole/PinholeDialer.kt": "6a69a9289926ae404433762998ae326fb803164ae9b40ff6613cfbd7cbec775e",
+    "deviceTest/src/androidTest/java/org/pinhole/devicetest/PhysicalPeerTest.kt": "c88f1a957f078dd25fb845551c2dee80675fbc465d108c5e428a4bd868c6c90f"
+  },
+  "cases": [
+    {
+      "name": "cellular automatic routing",
+      "passed": true,
+      "path": "iroh relay",
+      "relayHost": "aps1-1.relay.n0.iroh.link",
+      "connectMs": 1383,
+      "echoes": 48,
+      "attempts": 48,
+      "rttMs": {
+        "p50": 177,
+        "p95": 213,
+        "max": 295
+      }
+    },
+    {
+      "name": "cellular forced relay",
+      "passed": true,
+      "path": "iroh relay",
+      "relayHost": "aps1-1.relay.n0.iroh.link",
+      "connectMs": 1399,
+      "echoes": 48,
+      "attempts": 48,
+      "rttMs": {
+        "p50": 179,
+        "p95": 251,
+        "max": 298
+      }
+    }
+  ],
+  "payloadSizeBytes": [
+    1,
+    2,
+    60,
+    120,
+    333,
+    467,
+    777,
+    900,
+    1024,
+    1100,
+    1200
+  ],
+  "assertions": [
+    "active cellular network before and after each exchange",
+    "encrypted peer handshake",
+    "48 byte-exact responses per case",
+    "close retires session"
+  ],
+  "notValidated": [
+    "carrier-direct UDP",
+    "direct TCP",
+    "Wi-Fi/VPN handoff",
+    "background or suspend recovery",
+    "voice encode/playback",
+    "other devices or carriers"
+  ],
+  "redaction": "No phone serial, tickets, endpoint identities, subscriber IDs or local/public IP addresses retained in this report."
+}

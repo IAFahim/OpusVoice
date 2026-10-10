@@ -28,6 +28,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.CancellationException
 import pinhole.PinholeDialer
+import pinhole.IrohPath
 import com.example.network.pinholeRouterMapping
 import com.example.network.PinholeLanBrowser
 import pinhole.LanReceiver
@@ -99,6 +100,12 @@ data class OpusVoiceUiState(
 )
 
 class OpusVoiceViewModel(application: Application) : AndroidViewModel(application) {
+    private fun pinholePathLabel(path: IrohPath?): String = when (path) {
+        is IrohPath.Direct -> "direct UDP"
+        is IrohPath.DirectTcp -> "direct TCP"
+        is IrohPath.Relay -> "iroh relay"
+        null -> "Pinhole"
+    }
 
     private val _uiState = MutableStateFlow(OpusVoiceUiState())
     val uiState: StateFlow<OpusVoiceUiState> = _uiState.asStateFlow()
@@ -346,8 +353,13 @@ class OpusVoiceViewModel(application: Application) : AndroidViewModel(applicatio
                         _uiState.update {
                             if (pinholeDialer !== connecting || !connecting.isConnected) it
                             else it.copy(isPinholeConnected = true, transportState = TransportState.CONNECTED,
-                                userNotice = "Pinhole session established (encrypted)")
+                                userNotice = "Pinhole connected via ${pinholePathLabel(connecting.connectedPath)} (encrypted)")
                         }
+                    }
+                }
+                connecting.onPathChanged = { path ->
+                    if (pinholeDialer === connecting && connecting.isConnected) {
+                        _uiState.update { it.copy(userNotice = "Pinhole connected via ${pinholePathLabel(path)} (encrypted)") }
                     }
                 }
                 connecting.onClosed = { reason ->
@@ -382,7 +394,7 @@ class OpusVoiceViewModel(application: Application) : AndroidViewModel(applicatio
                     _uiState.update {
                         it.copy(isStreaming = started, isPinholeConnected = started,
                             transportState = if (started) TransportState.CONNECTED else TransportState.ERROR,
-                            userNotice = if (started) "Streaming via Pinhole" else "AudioRecord failed to start. Check mic permissions.")
+                            userNotice = if (started) "Streaming via ${pinholePathLabel(connecting.connectedPath)} (encrypted)" else "AudioRecord failed to start. Check mic permissions.")
                     }
                 }
             } catch (e: Exception) {

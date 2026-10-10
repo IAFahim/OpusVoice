@@ -36,7 +36,7 @@ jobs:
             -dname "CN=Android Debug,O=Android,C=US"
 
       - name: Build debug APK and run unit tests
-        run: ./gradlew :pinhole:test assembleDebug testDebugUnitTest --stacktrace
+        run: ./gradlew :pinhole:test assembleDebug testDebugUnitTest :deviceTest:assembleDebugAndroidTest --stacktrace
 
       - name: Release build smoke check (R8 + resource shrinking)
         env:
