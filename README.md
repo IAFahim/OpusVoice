@@ -130,8 +130,8 @@ protocol above them. An unchanged native iroh application endpoint needs its own
 compatible packet protocol engine; sharing a relay or endpoint ID does not change
 the application's session protocol.
 
-The repeatable C# ↔ Kotlin test matrix covers eleven cases: direct Pinhole, an IPv6-only
-LAN receiver ticket generated in Kotlin, router mapping, lost
+The repeatable C# ↔ Kotlin test matrix covers twelve cases: direct Pinhole, an IPv6-only
+LAN receiver ticket generated in Kotlin, router mapping, an edited first PACK token, lost
 PACK/HSCK flights, native IDs/tickets with direct and forced relay routes,
 relay-to-direct upgrade, and tampered discovery rejection. The mapping case verifies
 that the .NET peer receives the authenticated candidate for the phone's actual audio
@@ -145,4 +145,36 @@ IROH_RELAY_BIN=/path/to/iroh-relay dotnet run --project interop/InteropRunner \
 ```
 
 These network interop tests run on the JVM. A physical Android phone's
-Wi-Fi/cellular/background/audio matrix has not been validated by this change.
+complete Wi-Fi/cellular/background/audio matrix remains separate validation.
+
+### Physical device transport validation
+
+`deviceTest` is a separate test APK containing the shipping Kotlin transport. It
+does not replace the installed voice app or request microphone/camera permission.
+Start a .NET echo peer on the desktop's actual network:
+
+```bash
+dotnet run --project interop/EchoPeer -p:PinholeRoot=/path/to/Pinhole.Net -- --physical-network
+```
+
+With an authorized Android phone on cellular and Wi-Fi off, supply its printed
+ticket to the instrumented test. Keep tickets in local test logs; they advertise
+the peer's addresses and public identity.
+
+```bash
+./gradlew :deviceTest:connectedDebugAndroidTest \
+  -Pandroid.testInstrumentationRunnerArguments.pinholeTicket="$PINHOLE_TICKET" \
+  -Pandroid.testInstrumentationRunnerArguments.requireCellular=true
+```
+
+Add `-Pandroid.testInstrumentationRunnerArguments.relayOnly=true` to measure a
+forced relay separately. The test verifies the active network, completes the
+encrypted handshake, checks 48 byte-exact echoes at sizes 1–1200, records retries
+and latency percentiles, and checks that close retires the connection. These are
+transport checks; audio, background/suspend, Wi-Fi handoff and VPN require their
+own recorded device scenarios.
+
+The [2026-10-10 OPPO LTE report](docs/validation/2026-10-10-oppo-cellular.json)
+records passing automatic-routing and forced-relay cases on Android 16. Both
+used the Singapore iroh relay and returned all 48 datagrams without retries.
+The report includes APK/core assembly hashes and states the untested scenarios.

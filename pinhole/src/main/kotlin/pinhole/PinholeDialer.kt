@@ -59,6 +59,7 @@ class PinholeDialer(
     private var lastDirectReceiveNanos = 0L
     private var nativeDiscovery = false
     private var remoteToken = 0
+    private var remoteTokenAuthenticated = false
     private var recvThread: Thread? = null
     private var punchThread: Thread? = null
     private var candidateThread: Thread? = null
@@ -192,8 +193,12 @@ class PinholeDialer(
             FRAME_PACK -> handlePack(frame, from)
             FRAME_PUNC -> handlePunc(frame, from)
             else -> {
-                if (!handshakeReady || readIntLe(frame, 9) != remoteToken) return
+                if (!handshakeReady || remoteTokenAuthenticated && readIntLe(frame, 9) != remoteToken) return
                 val plaintext = recvSealer?.open(frame, frame.size) ?: return
+                // PACK confirms the keys, while sealed AAD authenticates the token.
+                // Correct an edited first PACK only after the genuine frame opens.
+                remoteToken = readIntLe(frame, 9)
+                remoteTokenAuthenticated = true
                 val now = System.nanoTime()
                 lastReceiveNanos = now
                 if (from is IrohPath.Direct) lastDirectReceiveNanos = now

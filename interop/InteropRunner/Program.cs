@@ -19,6 +19,7 @@ var configurations = new (string Name, string[] Args, string Path, string Result
     ("pinhole-lan-ipv6-ticket", ["--ipv6"], "direct", "accept"),
     ("pinhole-router-mapping", ["--fake-pcp"], "direct", "accept"),
     ("pinhole-lost-PACK-and-HSCK", ["--drop-handshake"], "direct", "accept"),
+    ("pinhole-edited-PACK-token", ["--edit-pack-token"], "direct", "accept"),
     ("iroh-ticket-direct", ["--iroh"], "direct", "accept"),
     ("iroh-id-direct", ["--iroh", "--id"], "direct", "accept"),
     ("pinhole-relay-only", ["--relay-only", "--relay-bin", relayBin], "relay", "accept"),
@@ -76,8 +77,10 @@ try
             throw new IOException("handshake loss fixture did not drop both flights");
         if (peer.Name == "pinhole-router-mapping" && !peer.Log.Any(line => line.StartsWith("MAPPING_VALIDATED ")))
             throw new IOException("the .NET peer did not receive the authenticated mapping candidate for the audio port");
+        if (peer.Name.Contains("edited-") && !peer.Log.Contains("EDITED=PACK-TOKEN"))
+            throw new IOException("token fixture did not edit the initial PACK");
     }
-    Console.WriteLine("PASS: all eleven C# ↔ Kotlin connection cases.");
+    Console.WriteLine($"PASS: all {configurations.Length} C# ↔ Kotlin connection cases.");
     return 0;
 }
 finally
